@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -7,51 +7,51 @@
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    button { padding: 10px 12px; cursor: pointer; }
-    video { width: min(480px, 100%); border: 1px solid #ddd; border-radius: 10px; }
+    button { padding: 10px 12px; cursor: pointer; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    video { width: min(480px, 100%); border: 1px solid #ddd; border-radius: 12px; background: #000; }
     .card { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
-    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 600; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; }
     .ok { background: #eaffea; }
     .warn { background: #fff6d6; }
     .bad { background: #ffe3e3; }
     .unk { background: #eee; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; font-size: 12px; }
-    code { background: #f7f7f7; padding: 2px 6px; border-radius: 6px; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; font-size: 12px; vertical-align: top; }
+    code { background: #f7f7f7; padding: 2px 6px; border-radius: 6px; display: inline-block; max-width: 520px; overflow-wrap: anywhere; }
     .small { font-size: 12px; color: #555; }
   </style>
 </head>
 <body>
-  <h2>Implantaat barcode scan (GS1 DataMatrix + EAN)</h2>
+  <h2>Implant Barcode Scanner (GS1 DataMatrix + EAN)</h2>
 
   <div class="row">
     <button id="startBtn">Start scanner</button>
     <button id="stopBtn" disabled>Stop</button>
     <button id="exportBtn" disabled>Export CSV</button>
-    <button id="clearBtn" disabled>Wis log</button>
+    <button id="clearBtn" disabled>Clear log</button>
   </div>
 
   <div class="card">
     <div class="row">
       <video id="video" muted playsinline></video>
       <div>
-        <div><strong>Laatste scan</strong></div>
-        <div class="small">Tip: scan bij voorkeur de GS1 DataMatrix (UDI) voor vervaldatum.</div>
+        <div><strong>Last scan</strong></div>
+        <div class="small">Tip: scan the GS1 DataMatrix (UDI) to get expiry (AI 17).</div>
         <div style="margin-top:8px;">
           <div>Type: <span id="lastType">–</span></div>
           <div>GTIN: <span id="lastGtin">–</span></div>
           <div>Expiry: <span id="lastExpiry">–</span></div>
           <div>Status: <span id="lastStatus" class="badge unk">–</span></div>
+          <div class="small" style="margin-top:8px;">If Start does nothing: open the page in Safari (not inside the GitHub app), and allow camera access.</div>
         </div>
       </div>
     </div>
   </div>
 
   <div class="card">
-    <div class="row">
-      <div><strong>Scanlog</strong> (<span id="count">0</span>)</div>
-    </div>
-    <table id="table">
+    <div><strong>Scan log</strong> (<span id="count">0</span>)</div>
+    <table>
       <thead>
         <tr>
           <th>Timestamp</th>
@@ -64,360 +64,314 @@
           <th>Raw</th>
         </tr>
       </thead>
-      <tbody></tbody>
+      <tbody id="tbody"></tbody>
     </table>
   </div>
 
-  <!-- ZXing (camera scanning). Supports EAN_13 and DATA_MATRIX -->
-  <script type="module">
-    import {
-      BrowserMultiFormatReader,
-      BarcodeFormat,
-      DecodeHintType
-    } from "https://unpkg.com/@zxing/library@0.21.3/esm/index.js";
+  <!-- iPhone-friendly (non-module) ZXing bundle -->
+  <script src="https://unpkg.com/@zxing/library@0.21.3"></script>
 
-    const startBtn  = document.getElementById("startBtn");
-    const stopBtn   = document.getElementById("stopBtn");
-    const exportBtn = document.getElementById("exportBtn");
-    const clearBtn  = document.getElementById("clearBtn");
-    const videoEl   = document.getElementById("video");
+  <script>
+    (function () {
+      const startBtn  = document.getElementById("startBtn");
+      const stopBtn   = document.getElementById("stopBtn");
+      const exportBtn = document.getElementById("exportBtn");
+      const clearBtn  = document.getElementById("clearBtn");
+      const videoEl   = document.getElementById("video");
 
-    const lastType   = document.getElementById("lastType");
-    const lastGtin   = document.getElementById("lastGtin");
-    const lastExpiry = document.getElementById("lastExpiry");
-    const lastStatus = document.getElementById("lastStatus");
+      const lastType   = document.getElementById("lastType");
+      const lastGtin   = document.getElementById("lastGtin");
+      const lastExpiry = document.getElementById("lastExpiry");
+      const lastStatus = document.getElementById("lastStatus");
 
-    const tbody = document.querySelector("#table tbody");
-    const countEl = document.getElementById("count");
+      const tbody = document.getElementById("tbody");
+      const countEl = document.getElementById("count");
 
-    /** In-memory log (downloadable as CSV) */
-    const scanLog = [];
+      const scanLog = [];
 
-    /** ZXing reader with hints to improve reliability */
-    const hints = new Map();
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-      BarcodeFormat.EAN_13,
-      BarcodeFormat.EAN_8,
-      BarcodeFormat.CODE_128,
-      BarcodeFormat.DATA_MATRIX,
-      BarcodeFormat.QR_CODE
-    ]);
+      let scanning = false;
+      let lastRaw = null;
+      let lastScanAtMs = 0;
 
-    const reader = new BrowserMultiFormatReader(hints);
-
-    let currentDeviceId = null;
-    let scanning = false;
-    let lastRaw = null;
-    let lastScanAtMs = 0;
-
-    function setStatusBadge(text) {
-      lastStatus.textContent = text;
-      lastStatus.className = "badge " + (
-        text === "OK" ? "ok" :
-        text.startsWith("EXPIRING") ? "warn" :
-        text === "EXPIRED" ? "bad" : "unk"
-      );
-    }
-
-    function toISODate(d) {
-      if (!d) return "";
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth()+1).padStart(2,"0");
-      const dd = String(d.getDate()).padStart(2,"0");
-      return `${yyyy}-${mm}-${dd}`;
-    }
-
-    function addMonths(date, months) {
-      const d = new Date(date);
-      const day = d.getDate();
-      d.setMonth(d.getMonth() + months);
-      // Handle month rollovers (e.g. Jan 31 + 1 month)
-      if (d.getDate() < day) d.setDate(0);
-      return d;
-    }
-
-    function classifyExpiry(expiryDate) {
-      if (!expiryDate) return "UNKNOWN_NO_EXPIRY_IN_CODE";
-      const today = new Date();
-      today.setHours(0,0,0,0);
-      const exp = new Date(expiryDate);
-      exp.setHours(0,0,0,0);
-
-      if (exp < today) return "EXPIRED";
-
-      const in3m = addMonths(today, 3);
-      if (exp <= in3m) return "EXPIRING_≤3_MONTHS";
-
-      return "OK";
-    }
-
-    /**
-     * Parse GS1 AIs from a raw string.
-     * Assumptions:
-     * - FNC1 group separator may appear as ASCII 29 (GS) or as literal separators.
-     * - Supports common AIs: (01) GTIN, (17) Expiry YYMMDD, (10) LOT, (21) SERIAL
-     */
-    function parseGs1(raw) {
-      if (!raw) return { gtin:"", expiry:null, lot:"", serial:"", raw };
-
-      // Normalize: some scanners deliver ASCII 29 as '\u001d'
-      const GS = "\u001d";
-      const s = raw;
-
-      // Helper to read fixed-length AI segments after a prefix
-      const readFixed = (str, ai, len) => {
-        const idx = str.indexOf(ai);
-        if (idx === -1) return "";
-        return str.slice(idx + ai.length, idx + ai.length + len);
-      };
-
-      // GS1 can be encoded without parentheses; AI is just digits.
-      // GTIN (01) is fixed 14
-      const gtin14 = readFixed(s, "01", 14);
-
-      // Expiry (17) is fixed 6 YYMMDD
-      const exp6 = readFixed(s, "17", 6);
-
-      // Variable length AIs (10) and (21) end at GS separator or next AI.
-      const readVariable = (str, ai) => {
-        const start = str.indexOf(ai);
-        if (start === -1) return "";
-        let i = start + ai.length;
-        let out = "";
-        while (i < str.length) {
-          const ch = str[i];
-          if (ch === GS) break;
-
-          // If next looks like a known AI boundary, stop (simple heuristic)
-          // Common next AIs are 17, 21, 10, 01, 11, 15, 30, 37
-          const next2 = str.slice(i, i+2);
-          if (["01","10","17","21","11","15","30","37"].includes(next2) && out.length > 0) {
-            break;
-          }
-          out += ch;
-          i++;
-        }
-        return out;
-      };
-
-      const lot = readVariable(s, "10");
-      const serial = readVariable(s, "21");
-
-      // Convert expiry YYMMDD to Date (with day '00' treated as last day of month)
-      let expiry = null;
-      if (exp6 && exp6.length === 6) {
-        const yy = parseInt(exp6.slice(0,2), 10);
-        const mm = parseInt(exp6.slice(2,4), 10);
-        let dd = parseInt(exp6.slice(4,6), 10);
-
-        // GS1 year pivot: assume 2000-2099
-        const yyyy = 2000 + yy;
-
-        if (dd === 0) {
-          // last day of month
-          expiry = new Date(yyyy, mm, 0);
-        } else {
-          expiry = new Date(yyyy, mm-1, dd);
-        }
-        if (Number.isNaN(expiry.getTime())) expiry = null;
+      function setStatusBadge(text) {
+        lastStatus.textContent = text;
+        lastStatus.className = "badge " + (
+          text === "OK" ? "ok" :
+          (text && text.indexOf("EXPIRING") === 0) ? "warn" :
+          text === "EXPIRED" ? "bad" : "unk"
+        );
       }
 
-      return { gtin: gtin14, expiry, lot, serial, raw };
-    }
+      function toISODate(d) {
+        if (!d) return "";
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${yyyy}-${mm}-${dd}`;
+      }
 
-    function detectType(result) {
-      // ZXing provides result.getBarcodeFormat().toString()
-      const fmt = result.getBarcodeFormat().toString();
-      return fmt; // e.g., "EAN_13", "DATA_MATRIX"
-    }
+      function addMonths(date, months) {
+        const d = new Date(date);
+        const day = d.getDate();
+        d.setMonth(d.getMonth() + months);
+        if (d.getDate() < day) d.setDate(0);
+        return d;
+      }
 
-    function appendRow(item) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${item.timestamp}</td>
-        <td>${item.type}</td>
-        <td>${item.gtin || ""}</td>
-        <td>${item.expiry || ""}</td>
-        <td>${item.status}</td>
-        <td>${item.lot || ""}</td>
-        <td>${item.serial || ""}</td>
-        <td><code>${escapeHtml(item.raw).slice(0,60)}${item.raw.length>60?"…":""}</code></td>
-      `;
-      tbody.prepend(tr);
-      countEl.textContent = String(scanLog.length);
-      exportBtn.disabled = scanLog.length === 0;
-      clearBtn.disabled = scanLog.length === 0;
-    }
+      function classifyExpiry(expiryDate) {
+        if (!expiryDate) return "UNKNOWN_NO_EXPIRY_IN_CODE";
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        const exp = new Date(expiryDate);
+        exp.setHours(0,0,0,0);
 
-    function escapeHtml(str) {
-      return (str || "").replace(/[&<>"']/g, m => ({
-        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
-      }[m]));
-    }
+        if (exp < today) return "EXPIRED";
+        const in3m = addMonths(today, 3);
+        if (exp <= in3m) return "EXPIRING_≤3_MONTHS";
+        return "OK";
+      }
 
-    function downloadCSV() {
-      const header = [
-        "Timestamp","Type","GTIN","ExpiryDate","Status","Lot","Serial","Raw"
-      ];
-      const rows = scanLog.map(x => [
-        x.timestamp, x.type, x.gtin, x.expiry, x.status, x.lot, x.serial, x.raw
-      ].map(csvEscape).join(","));
+      function escapeHtml(str) {
+        return (str || "").replace(/[&<>"']/g, m => ({
+          "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+        }[m]));
+      }
 
-      const csv = [header.join(","), ...rows].join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
+      function csvEscape(v) {
+        const s = String(v ?? "");
+        if (/[",\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
+        return s;
+      }
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `implant_scans_${new Date().toISOString().slice(0,10)}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    }
+      function appendRow(item) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${item.timestamp}</td>
+          <td>${item.type}</td>
+          <td>${escapeHtml(item.gtin || "")}</td>
+          <td>${escapeHtml(item.expiry || "")}</td>
+          <td>${escapeHtml(item.status)}</td>
+          <td>${escapeHtml(item.lot || "")}</td>
+          <td>${escapeHtml(item.serial || "")}</td>
+          <td><code>${escapeHtml(item.raw || "")}</code></td>
+        `;
+        tbody.prepend(tr);
+        countEl.textContent = String(scanLog.length);
+        exportBtn.disabled = scanLog.length === 0;
+        clearBtn.disabled = scanLog.length === 0;
+      }
 
-    function csvEscape(v) {
-      const s = String(v ?? "");
-      if (/[",\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
-      return s;
-    }
+      function downloadCSV() {
+        const header = ["Timestamp","Type","GTIN","ExpiryDate","Status","Lot","Serial","Raw"];
+        const rows = scanLog.map(x => [
+          x.timestamp, x.type, x.gtin, x.expiry, x.status, x.lot, x.serial, x.raw
+        ].map(csvEscape).join(","));
 
-    async function start() {
-      if (scanning) return;
+        const csv = [header.join(","), ...rows].join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
 
-      const devices = await reader.listVideoInputDevices();
-      if (!devices.length) {
-        alert("Geen camera gevonden.");
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `implant_scans_${new Date().toISOString().slice(0,10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      /**
+       * Minimal GS1 AI parser for common UDI content:
+       * (01) GTIN (14 fixed)
+       * (17) Expiry YYMMDD (6 fixed)
+       * (10) LOT (variable, ends at GS)
+       * (21) SERIAL (variable, ends at GS)
+       *
+       * Many scanners output the "GS" group separator as ASCII 29 (\u001d).
+       */
+      function parseGs1(raw) {
+        const GS = "\u001d";
+        const s = raw || "";
+
+        const readFixed = (ai, len) => {
+          const idx = s.indexOf(ai);
+          if (idx === -1) return "";
+          return s.slice(idx + ai.length, idx + ai.length + len);
+        };
+
+        const readVariable = (ai) => {
+          const start = s.indexOf(ai);
+          if (start === -1) return "";
+          let i = start + ai.length;
+          let out = "";
+          while (i < s.length) {
+            const ch = s[i];
+            if (ch === GS) break;
+            // Heuristic: stop if next characters look like a new AI and we already collected something
+            const next2 = s.slice(i, i+2);
+            if (out.length > 0 && ["01","10","17","21","11","15","30","37"].includes(next2)) break;
+            out += ch;
+            i++;
+          }
+          return out;
+        };
+
+        const gtin14 = readFixed("01", 14);
+        const exp6 = readFixed("17", 6);
+        const lot = readVariable("10");
+        const serial = readVariable("21");
+
+        let expiry = null;
+        if (exp6 && exp6.length === 6) {
+          const yy = parseInt(exp6.slice(0,2), 10);
+          const mm = parseInt(exp6.slice(2,4), 10);
+          let dd = parseInt(exp6.slice(4,6), 10);
+          const yyyy = 2000 + yy;
+
+          if (dd === 0) {
+            // last day of month
+            expiry = new Date(yyyy, mm, 0);
+          } else {
+            expiry = new Date(yyyy, mm - 1, dd);
+          }
+          if (Number.isNaN(expiry.getTime())) expiry = null;
+        }
+
+        return { gtin: gtin14, expiry, lot, serial };
+      }
+
+      // ZXing init
+      if (!window.ZXing) {
+        alert("ZXing library failed to load. Try disabling content blockers or switching to 4G/5G.");
         return;
       }
-      // Prefer back camera if possible
-      const back = devices.find(d => /back|rear|environment/i.test(d.label));
-      currentDeviceId = (back?.deviceId) || devices[0].deviceId;
 
-      scanning = true;
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
+      const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = window.ZXing;
 
-      reader.decodeFromVideoDevice(currentDeviceId, videoEl, (result, err) => {
-        if (!scanning) return;
-        if (result) {
-          const raw = result.getText();
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.DATA_MATRIX,
+        BarcodeFormat.QR_CODE
+      ]);
 
-          // Simple debounce: ignore repeats within 1.2s
-          const now = Date.now();
-          if (raw === lastRaw && (now - lastScanAtMs) < 1200) return;
-          lastRaw = raw;
-          lastScanAtMs = now;
+      const reader = new BrowserMultiFormatReader(hints);
 
-          const type = detectType(result);
+      async function start() {
+        if (scanning) return;
 
-          let gtin = "";
-          let expiryISO = "";
-          let lot = "";
-          let serial = "";
-          let status = "UNKNOWN";
+        try {
+          // Trigger permission prompt early on iOS
+          await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
 
-          if (type === "DATA_MATRIX" || type === "QR_CODE" || type === "CODE_128") {
-            // Try GS1 parse (common for UDI)
-            const parsed = parseGs1(raw);
-            gtin = parsed.gtin || "";
-            lot = parsed.lot || "";
-            serial = parsed.serial || "";
-            expiryISO = parsed.expiry ? toISODate(parsed.expiry) : "";
-            status = classifyExpiry(parsed.expiry);
-          } else if (type === "EAN_13" || type === "EAN_8") {
-            // EAN has GTIN but no expiry
-            gtin = raw;
-            status = "UNKNOWN_NO_EXPIRY_IN_CODE";
-          } else {
-            // Unknown format: log raw
-            status = "UNKNOWN_UNSUPPORTED_FORMAT";
+          const devices = await reader.listVideoInputDevices();
+          if (!devices.length) {
+            alert("No camera devices found.");
+            return;
           }
 
-          // Update UI
-          lastType.textContent = type;
-          lastGtin.textContent = gtin || "—";
-          lastExpiry.textContent = expiryISO || "—";
-          setStatusBadge(status);
+          // Prefer back camera if labels are available
+          const back = devices.find(d => /back|rear|environment/i.test(d.label));
+          const deviceId = (back && back.deviceId) ? back.deviceId : devices[0].deviceId;
 
-          const item = {
-            timestamp: new Date().toISOString(),
-            type,
-            gtin,
-            expiry: expiryISO,
-            status,
-            lot,
-            serial,
-            raw
-          };
-          scanLog.push(item);
-          appendRow(item);
+          scanning = true;
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+
+          reader.decodeFromVideoDevice(deviceId, videoEl, (result, err) => {
+            if (!scanning) return;
+
+            if (result) {
+              const raw = result.getText();
+              const now = Date.now();
+              if (raw === lastRaw && (now - lastScanAtMs) < 1200) return; // debounce
+              lastRaw = raw;
+              lastScanAtMs = now;
+
+              const fmt = result.getBarcodeFormat().toString(); // "EAN_13", "DATA_MATRIX", etc.
+
+              let gtin = "";
+              let expiryISO = "";
+              let lot = "";
+              let serial = "";
+              let status = "UNKNOWN";
+
+              if (fmt === "DATA_MATRIX" || fmt === "QR_CODE" || fmt === "CODE_128") {
+                const parsed = parseGs1(raw);
+                gtin = parsed.gtin || "";
+                lot = parsed.lot || "";
+                serial = parsed.serial || "";
+                expiryISO = parsed.expiry ? toISODate(parsed.expiry) : "";
+                status = classifyExpiry(parsed.expiry);
+              } else if (fmt === "EAN_13" || fmt === "EAN_8") {
+                gtin = raw;
+                status = "UNKNOWN_NO_EXPIRY_IN_CODE";
+              } else {
+                status = "UNKNOWN_UNSUPPORTED_FORMAT";
+              }
+
+              lastType.textContent = fmt;
+              lastGtin.textContent = gtin || "—";
+              lastExpiry.textContent = expiryISO || "—";
+              setStatusBadge(status);
+
+              const item = {
+                timestamp: new Date().toISOString(),
+                type: fmt,
+                gtin,
+                expiry: expiryISO,
+                status,
+                lot,
+                serial,
+                raw
+              };
+              scanLog.push(item);
+              appendRow(item);
+            }
+
+            // Optional: log non-NotFound errors
+            if (err && err.name && err.name !== "NotFoundException") {
+              // console.log(err);
+            }
+          });
+
+        } catch (e) {
+          alert("Scanner failed to start: " + (e && e.message ? e.message : e));
+          // console.log(e);
+          scanning = false;
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
         }
-      });
-    }
+      }
 
-    async function stop() {
-      scanning = false;
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      try { reader.reset(); } catch {}
-    }
+      function stop() {
+        scanning = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        try { reader.reset(); } catch (e) {}
+      }
 
-    function clearLog() {
-      scanLog.length = 0;
-      tbody.innerHTML = "";
-      countEl.textContent = "0";
-      exportBtn.disabled = true;
-      clearBtn.disabled = true;
-      lastType.textContent = "–";
-      lastGtin.textContent = "–";
-      lastExpiry.textContent = "–";
+      function clearLog() {
+        scanLog.length = 0;
+        tbody.innerHTML = "";
+        countEl.textContent = "0";
+        exportBtn.disabled = true;
+        clearBtn.disabled = true;
+        lastType.textContent = "–";
+        lastGtin.textContent = "–";
+        lastExpiry.textContent = "–";
+        setStatusBadge("–");
+      }
+
+      startBtn.addEventListener("click", start);
+      stopBtn.addEventListener("click", stop);
+      exportBtn.addEventListener("click", downloadCSV);
+      clearBtn.addEventListener("click", clearLog);
+
       setStatusBadge("–");
-    }
-
-    startBtn.addEventListener("click", start);
-    stopBtn.addEventListener("click", stop);
-    exportBtn.addEventListener("click", downloadCSV);
-    clearBtn.addEventListener("click", clearLog);
-
-    // UX: start automatically if desired
-    async function start() {
-  if (scanning) return;
-
-  try {
-    // Force permission prompt early
-    await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-
-    const devices = await reader.listVideoInputDevices();
-    if (!devices.length) {
-      alert("Geen camera gevonden.");
-      return;
-    }
-
-    const back = devices.find(d => /back|rear|environment/i.test(d.label));
-    currentDeviceId = (back?.deviceId) || devices[0].deviceId;
-
-    scanning = true;
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-
-    reader.decodeFromVideoDevice(currentDeviceId, videoEl, (result, err) => {
-      if (!scanning) return;
-      if (err && err.name && err.name !== "NotFoundException") {
-        console.log(err);
-      }
-      if (result) {
-        // (laat de rest van jouw bestaande result-handling staan)
-        const raw = result.getText();
-        // ... jouw bestaande code ...
-      }
-    });
-
-  } catch (e) {
-    alert("Scanner start niet: " + (e?.message || e));
-    console.log(e);
-  }
-};
+    })();
   </script>
 </body>
 </html>
