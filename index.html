@@ -1,163 +1,530 @@
 <!doctype html>
-<html lang="en">
+<html lang="nl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Scanner Diagnostic</title>
+  <title>Implant Scanner</title>
   <style>
-    body { font-family: system-ui; margin: 16px; }
-    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    button { padding:10px 14px; border:1px solid #ddd; border-radius:10px; background:#fff; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    input[type="number"] { padding:10px 12px; border-radius:10px; border:1px solid #ddd; width: 180px; }
     video { width:min(520px,100%); background:#000; border-radius:12px; border:1px solid #ddd; margin-top:10px; }
+
     .card { border:1px solid #e5e5e5; border-radius:12px; padding:12px; margin-top:12px; }
-    .k { font-weight:800; }
-    pre { white-space: pre-wrap; word-break: break-word; background:#f7f7f7; padding:10px; border-radius:10px; border:1px solid #eee; }
-    .ok { color: #0a5a0a; }
-    .bad { color: #7a0b0b; }
+    .small { font-size:12px; color:#555; margin-top:6px; }
+
+    .badge.big {
+      font-size: 26px;
+      padding: 12px 20px;
+      border-radius: 999px;
+      font-weight: 900;
+      display: inline-block;
+      letter-spacing: .4px;
+    }
+    .ok  { background:#eaffea; color:#0a5a0a; border:1px solid #bfe9bf; }
+    .bad { background:#ffe3e3; color:#7a0b0b; border:1px solid #f0b3b3; }
+    .unk { background:#eee; color:#333; border:1px solid #ddd; }
+
+    table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
+    th, td { border-bottom:1px solid #eee; padding:8px; text-align:left; vertical-align:top; }
+
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      background: rgba(20,20,20,0.92);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 14px;
+      font-weight: 800;
+      font-size: 16px;
+      display: none;
+      z-index: 9999;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      max-width: 92vw;
+      text-align: center;
+    }
+
+    .pill {
+      display:inline-block;
+      font-size:12px;
+      padding:4px 10px;
+      border:1px solid #ddd;
+      border-radius:999px;
+      background:#fafafa;
+    }
   </style>
 </head>
 <body>
-  <h2>Scanner Diagnostic (iPhone Safari)</h2>
+
+  <h2>Implant Scanner</h2>
 
   <div class="row">
+    <div>
+      <div class="small"><strong>Toetsen op verloop (maanden)</strong></div>
+      <input id="monthsInput" type="number" value="3" min="0" max="36" />
+    </div>
     <button id="startBtn">Start</button>
     <button id="stopBtn" disabled>Stop</button>
+    <button id="exportBtn" disabled>Export CSV</button>
+    <button id="clearBtn">Leegmaken</button>
+    <span class="pill" id="camInfo">Camera: –</span>
+  </div>
+
+  <div class="small">
+    Werkwijze: houd <strong>beide barcodes tegelijk</strong> in beeld (boven: GTIN/EAN, onder: Code128 met THT/LOT/SERIE). De app wacht op beide en logt dan 1 regel.
   </div>
 
   <video id="video" muted playsinline></video>
 
   <div class="card">
-    <div><span class="k">HTTPS:</span> <span id="httpsStatus">–</span></div>
-    <div><span class="k">ZXing loaded:</span> <span id="zxingStatus">–</span></div>
-    <div><span class="k">Camera stream:</span> <span id="camStatus">–</span></div>
-    <div><span class="k">Last format:</span> <span id="lastFmt">–</span></div>
-    <div><span class="k">Last text:</span></div>
-    <pre id="lastText">–</pre>
-    <div><span class="k">Errors:</span></div>
-    <pre id="errors">–</pre>
+    <div><strong>Laatste resultaat</strong></div>
+    <div class="small">Format(s): <span id="lastFmt">–</span></div>
+    <div style="margin-top:8px;">
+      <div>GTIN: <span id="lastGtin">–</span></div>
+      <div>THT: <span id="lastExpiry">–</span></div>
+      <div>LOT: <span id="lastLot">–</span></div>
+      <div>Serienr: <span id="lastSerial">–</span></div>
+      <div style="margin-top:10px;">Status:</div>
+      <span id="lastStatus" class="badge big unk">–</span>
+    </div>
   </div>
 
-  <!-- ZXing -->
+  <div class="card">
+    <div><strong>Scanlog</strong> (<span id="count">0</span>)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>GTIN</th>
+          <th>THT</th>
+          <th>Status</th>
+          <th>LOT</th>
+          <th>Serienr</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div id="toast">Artikel gescand, scan de volgende.</div>
+
   <script src="https://unpkg.com/@zxing/library@0.21.3"></script>
-
   <script>
-  (function(){
-    const startBtn = document.getElementById("startBtn");
-    const stopBtn  = document.getElementById("stopBtn");
-    const video    = document.getElementById("video");
+    (function () {
+      const startBtn  = document.getElementById("startBtn");
+      const stopBtn   = document.getElementById("stopBtn");
+      const exportBtn = document.getElementById("exportBtn");
+      const clearBtn  = document.getElementById("clearBtn");
+      const monthsInput = document.getElementById("monthsInput");
+      const camInfo   = document.getElementById("camInfo");
 
-    const httpsStatus = document.getElementById("httpsStatus");
-    const zxingStatus = document.getElementById("zxingStatus");
-    const camStatus   = document.getElementById("camStatus");
-    const lastFmt     = document.getElementById("lastFmt");
-    const lastText    = document.getElementById("lastText");
-    const errorsEl    = document.getElementById("errors");
+      const video     = document.getElementById("video");
+      const lastFmtEl = document.getElementById("lastFmt");
+      const lastGtin  = document.getElementById("lastGtin");
+      const lastExpiry= document.getElementById("lastExpiry");
+      const lastLot   = document.getElementById("lastLot");
+      const lastSerial= document.getElementById("lastSerial");
+      const lastStatus= document.getElementById("lastStatus");
 
-    function logErr(msg){
-      const prev = errorsEl.textContent === "–" ? "" : (errorsEl.textContent + "\n");
-      errorsEl.textContent = prev + msg;
-    }
+      const tbody = document.getElementById("tbody");
+      const countEl = document.getElementById("count");
 
-    httpsStatus.textContent = (location.protocol === "https:") ? "OK (https)" : "NOT HTTPS (will break camera)";
-    httpsStatus.className = (location.protocol === "https:") ? "ok" : "bad";
-
-    if (!window.ZXing) {
-      zxingStatus.textContent = "NO (blocked?)";
-      zxingStatus.className = "bad";
-      logErr("ZXing not loaded. Try disabling content blockers / adblock. Also ensure internet access.");
-      return;
-    } else {
-      zxingStatus.textContent = "YES";
-      zxingStatus.className = "ok";
-    }
-
-    const { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } = window.ZXing;
-
-    // Wide format list so EAN/QR/DataMatrix all have a chance
-    const hints = new Map();
-    hints.set(DecodeHintType.TRY_HARDER, true);
-    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-      BarcodeFormat.EAN_13,
-      BarcodeFormat.EAN_8,
-      BarcodeFormat.UPC_A,
-      BarcodeFormat.UPC_E,
-      BarcodeFormat.CODE_128,
-      BarcodeFormat.CODE_39,
-      BarcodeFormat.ITF,
-      BarcodeFormat.DATA_MATRIX,
-      BarcodeFormat.QR_CODE,
-      BarcodeFormat.PDF_417,
-      BarcodeFormat.AZTEC,
-      BarcodeFormat.CODABAR
-    ]);
-
-    const reader = new BrowserMultiFormatReader(hints);
-    let scanning = false;
-
-async function start(){
-  if (scanning) return;
-  scanning = true;
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
-  errorsEl.textContent = "–";
-  lastFmt.textContent = "–";
-  lastText.textContent = "–";
-
-  try {
-    // 1) Start stream ourselves (works very reliably on iPhone)
-    const constraints = {
-      video: {
-        facingMode: { ideal: "environment" },
-        width:  { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
-    };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    camStatus.textContent = "OK";
-    camStatus.className = "ok";
-
-    video.srcObject = stream;
-    await video.play();
-
-    // 2) Now let ZXing decode from the playing video element continuously
-    reader.decodeFromVideoElementContinuously(video, (result, err) => {
-      if (!scanning) return;
-
-      if (result) {
-        lastFmt.textContent = result.getBarcodeFormat().toString();
-        lastText.textContent = result.getText();
-      } else if (err && err.name && err.name !== "NotFoundException") {
-        logErr(err.name + ": " + (err.message || String(err)));
+      if (!window.ZXing) {
+        alert("ZXing library is niet geladen. Zet content blockers uit en refresh.");
+        return;
       }
-    });
 
-  } catch(e) {
-    camStatus.textContent = "FAILED";
-    camStatus.className = "bad";
-    logErr("Start failed: " + (e && e.message ? e.message : String(e)));
-    scanning = false;
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-  }
-}
+      const { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } = ZXing;
 
-   function stop(){
-  scanning = false;
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  try { reader.reset(); } catch(e) {}
+      // Hints: help voor Code128 + GS1 varianten
+      const hints = new Map();
+      hints.set(DecodeHintType.TRY_HARDER, true);
+      hints.set(DecodeHintType.ASSUME_GS1, true);
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.ITF,
+        BarcodeFormat.QR_CODE,
+        BarcodeFormat.DATA_MATRIX,
+        BarcodeFormat.PDF_417,
+        BarcodeFormat.AZTEC,
+        BarcodeFormat.CODABAR
+      ]);
 
-  // Stop camera stream
-  const s = video.srcObject;
-  if (s) s.getTracks().forEach(t => t.stop());
-  video.srcObject = null;
-}
+      const reader = new BrowserMultiFormatReader(hints);
 
-    startBtn.addEventListener("click", start);
-    stopBtn.addEventListener("click", stop);
-  })();
+      let scanning = false;
+      let stream = null;
+
+      const scanLog = [];
+
+      // Capture window: we want BOTH GTIN (EAN) AND details (from Code128)
+      const CAPTURE_TIMEOUT_MS = 2200;
+      let capture = null;            // { gtin, expiry, lot, serial, formats:Set }
+      let captureTimer = null;
+
+      // Debounce identical reads
+      let lastRaw = null;
+      let lastRawAt = 0;
+
+      function showToast(msg) {
+        const t = document.getElementById("toast");
+        t.textContent = msg || "Artikel gescand, scan de volgende.";
+        t.style.display = "block";
+        if (navigator.vibrate) navigator.vibrate(90);
+        clearTimeout(window.__toastTimer);
+        window.__toastTimer = setTimeout(() => { t.style.display = "none"; }, 1000);
+      }
+
+      function setBadge(text) {
+        lastStatus.textContent = text;
+        if (text === "OK") lastStatus.className = "badge big ok";
+        else if (text === "–") lastStatus.className = "badge big unk";
+        else lastStatus.className = "badge big bad";
+      }
+
+      function getMonthsThreshold() {
+        const n = parseInt(monthsInput.value, 10);
+        if (Number.isNaN(n) || n < 0) return 0;
+        return Math.min(36, n);
+      }
+
+      function classifyExpiry(expIso) {
+        if (!expIso) return "UNKNOWN";
+        const today = new Date(); today.setHours(0,0,0,0);
+        const exp = new Date(expIso); exp.setHours(0,0,0,0);
+        if (exp < today) return "EXPIRED";
+
+        const months = getMonthsThreshold();
+        const limit = new Date(today);
+        limit.setMonth(limit.getMonth() + months);
+
+        if (exp <= limit) return "EXPIRING";
+        return "OK";
+      }
+
+      function updateLastUI() {
+        lastGtin.textContent   = capture?.gtin   || "–";
+        lastExpiry.textContent = capture?.expiry || "–";
+        lastLot.textContent    = capture?.lot    || "–";
+        lastSerial.textContent = capture?.serial || "–";
+        lastFmtEl.textContent  = capture?.formats ? Array.from(capture.formats).join(" + ") : "–";
+      }
+
+      function resetCapture() {
+        capture = null;
+        if (captureTimer) clearTimeout(captureTimer);
+        captureTimer = null;
+      }
+
+      function startCaptureIfNeeded() {
+        if (capture) return;
+        capture = { gtin:"", expiry:"", lot:"", serial:"", formats:new Set() };
+
+        if (captureTimer) clearTimeout(captureTimer);
+        captureTimer = setTimeout(() => {
+          const hasGtin = !!capture?.gtin;
+          const hasDetails = !!(capture?.expiry || capture?.lot || capture?.serial);
+          if (hasGtin && !hasDetails) showToast("Alleen GTIN gezien. Houd beide barcodes stil in beeld en probeer opnieuw.");
+          else if (!hasGtin && hasDetails) showToast("Alleen details gezien. Houd beide barcodes stil in beeld en probeer opnieuw.");
+          resetCapture();
+          updateLastUI();
+          setBadge("–");
+        }, CAPTURE_TIMEOUT_MS);
+      }
+
+      function csvEscape(v) {
+        const s = String(v ?? "");
+        if (/[",\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
+        return s;
+      }
+
+      function appendRow(row) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${row.timestamp}</td>
+          <td>${row.gtin || ""}</td>
+          <td>${row.expiry || ""}</td>
+          <td>${row.status}</td>
+          <td>${row.lot || ""}</td>
+          <td>${row.serial || ""}</td>`;
+        tbody.prepend(tr);
+        countEl.textContent = String(scanLog.length);
+        exportBtn.disabled = scanLog.length === 0;
+      }
+
+      function downloadCSV() {
+        const header = ["Timestamp","GTIN","Expiry","Status","Lot","Serial"];
+        const rows = scanLog.map(x => [
+          x.timestamp, x.gtin, x.expiry, x.status, x.lot, x.serial
+        ].map(csvEscape).join(","));
+        const csv = [header.join(","), ...rows].join("\n");
+
+        const blob = new Blob([csv], { type:"text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `scanlog_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      // ---------- GS1 / Code128 parsing ----------
+      function normalizeGs1Text(raw) {
+        if (!raw) return "";
+        let s = String(raw);
+
+        // Remove symbology identifiers like ]C1 (GS1-128) etc.
+        s = s.replace(/^\](C1|c1|d2|D2|Q3|q3|e0|E0)/, "");
+
+        // Remove parentheses/spaces: (01) -> 01
+        s = s.replace(/[()\s]/g, "");
+
+        // Normalize textual group separator placeholders if any
+        s = s.replace(/<GS>/gi, "\u001d");
+
+        return s;
+      }
+
+      // Parse common GS1 AIs: 01(14), 17(6), 10(var), 21(var)
+      // Works even if GS separators are missing, using AI-boundary heuristic.
+      function parseGs1(raw) {
+        const GS = "\u001d";
+        const s = normalizeGs1Text(raw);
+
+        const readVar = (startIdx) => {
+          let out = "";
+          let i = startIdx;
+          while (i < s.length) {
+            const ch = s[i];
+            if (ch === GS) break;
+            const next2 = s.slice(i, i+2);
+            if (out.length > 0 && ["01","10","11","15","17","21","30","37"].includes(next2)) break;
+            out += ch;
+            i++;
+          }
+          return out;
+        };
+
+        let gtin = "", expiryISO = "", lot = "", serial = "";
+
+        let i = 0;
+        while (i < s.length) {
+          if (s[i] === GS) { i++; continue; }
+
+          const ai2 = s.slice(i, i+2);
+
+          if (ai2 === "01") {
+            const v = s.slice(i+2, i+16);
+            if (/^\d{14}$/.test(v)) gtin = v;
+            i += 16;
+            continue;
+          }
+
+          if (ai2 === "17") {
+            const v = s.slice(i+2, i+8);
+            if (/^\d{6}$/.test(v)) {
+              const yy = parseInt(v.slice(0,2),10);
+              const mm = parseInt(v.slice(2,4),10);
+              const dd = parseInt(v.slice(4,6),10);
+              const dt = new Date(2000+yy, mm-1, dd);
+              if (!Number.isNaN(dt.getTime())) {
+                const M = String(dt.getMonth()+1).padStart(2,"0");
+                const D = String(dt.getDate()).padStart(2,"0");
+                expiryISO = `${dt.getFullYear()}-${M}-${D}`;
+              }
+            }
+            i += 8;
+            continue;
+          }
+
+          if (ai2 === "10") {
+            const v = readVar(i+2);
+            if (v) lot = v;
+            i += 2 + v.length;
+            continue;
+          }
+
+          if (ai2 === "21") {
+            const v = readVar(i+2);
+            if (v) serial = v;
+            i += 2 + v.length;
+            continue;
+          }
+
+          i += 1;
+        }
+
+        return { gtin, expiryISO, lot, serial };
+      }
+
+      function maybeCommitIfComplete() {
+        if (!capture) return;
+        const hasGtin = !!capture.gtin;
+        const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
+        if (!(hasGtin && hasDetails)) return;
+
+        const status = classifyExpiry(capture.expiry);
+        setBadge(status);
+        updateLastUI();
+
+        const timestamp = new Date().toISOString();
+        const row = {
+          timestamp,
+          gtin: capture.gtin,
+          expiry: capture.expiry,
+          status,
+          lot: capture.lot,
+          serial: capture.serial
+        };
+
+        scanLog.push(row);
+        appendRow(row);
+
+        showToast("Artikel gescand, scan de volgende.");
+        resetCapture();
+      }
+
+      function formatName(fmt) {
+        // sometimes ZXing gives number; map it to name if possible
+        if (ZXing.BarcodeFormat && ZXing.BarcodeFormat[fmt]) return ZXing.BarcodeFormat[fmt];
+        return String(fmt);
+      }
+
+      function handleDecoded(raw, fmt) {
+        const now = Date.now();
+        if (raw === lastRaw && (now - lastRawAt) < 180) return;
+        lastRaw = raw;
+        lastRawAt = now;
+
+        startCaptureIfNeeded();
+
+        const fmtName = formatName(fmt);
+        capture.formats.add(fmtName);
+
+        // GTIN from EAN/UPC
+        if (fmtName === "EAN_13" || fmtName === "EAN_8" || fmtName === "UPC_A" || fmtName === "UPC_E") {
+          capture.gtin = String(raw);
+          updateLastUI();
+          setBadge("PENDING_DETAILS");
+          return;
+        }
+
+        // Details from Code128 (GS1-128) or other linear codes
+        const parsed = parseGs1(raw);
+
+        // Some Code128 strings may also contain 01 (gtin)
+        if (parsed.gtin) capture.gtin = parsed.gtin;
+        if (parsed.expiryISO) capture.expiry = parsed.expiryISO;
+        if (parsed.lot) capture.lot = parsed.lot;
+        if (parsed.serial) capture.serial = parsed.serial;
+
+        updateLastUI();
+
+        const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
+        const hasGtin = !!capture.gtin;
+
+        if (hasDetails && !hasGtin) setBadge("PENDING_GTIN");
+        else setBadge("PENDING_MERGE");
+
+        maybeCommitIfComplete();
+      }
+
+      async function startScanner() {
+        if (scanning) return;
+        scanning = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        setBadge("–");
+        resetCapture();
+
+        try {
+          // High quality stream for iPhone
+          const constraints = {
+            video: {
+              facingMode: { ideal: "environment" },
+              width:  { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          };
+
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          video.srcObject = stream;
+          await video.play();
+          camInfo.textContent = "Camera: OK";
+
+          // Continuous decode from the *playing* video element (works well on iPhone Safari)
+          reader.decodeFromVideoElementContinuously(video, (result, err) => {
+            if (!scanning) return;
+            if (result) {
+              handleDecoded(result.getText(), result.getBarcodeFormat());
+            }
+            // ignore NotFoundException (means: no barcode found in this frame)
+          });
+
+          showToast("Scanner gestart. Houd beide barcodes stil in beeld.");
+        } catch (e) {
+          camInfo.textContent = "Camera: ERROR";
+          scanning = false;
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+          alert("Start mislukt. Check Safari camera permissies. " + (e?.message || e));
+        }
+      }
+
+      function stopScanner() {
+        scanning = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        setBadge("–");
+        resetCapture();
+
+        try { reader.reset(); } catch (e) {}
+
+        const s = video.srcObject;
+        if (s) s.getTracks().forEach(t => t.stop());
+        video.srcObject = null;
+        stream = null;
+        camInfo.textContent = "Camera: –";
+
+        showToast("Scanner gestopt.");
+      }
+
+      function clearLog() {
+        scanLog.length = 0;
+        tbody.innerHTML = "";
+        countEl.textContent = "0";
+        exportBtn.disabled = true;
+
+        resetCapture();
+        lastFmtEl.textContent = "–";
+        lastGtin.textContent = "–";
+        lastExpiry.textContent = "–";
+        lastLot.textContent = "–";
+        lastSerial.textContent = "–";
+        setBadge("–");
+
+        showToast("Log geleegd");
+      }
+
+      // Wire up buttons
+      startBtn.addEventListener("click", startScanner);
+      stopBtn.addEventListener("click", stopScanner);
+      exportBtn.addEventListener("click", downloadCSV);
+      clearBtn.addEventListener("click", clearLog);
+
+      setBadge("–");
+    })();
   </script>
+
 </body>
 </html>
