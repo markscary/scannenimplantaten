@@ -6,98 +6,46 @@
   <title>GS1 Scanner</title>
   <style>
     :root{
-      --bg: #d7efff;           /* lichtblauw */
-      --card: #ffffff;
-      --border: #cfe3f3;
-      --text: #0f172a;
-      --muted: #475569;
+      --bg:#d7efff; --card:#fff; --border:#cfe3f3; --text:#0f172a; --muted:#475569;
     }
-    body{
-      margin: 16px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    h2{ margin: 0 0 10px 0; }
+    body{ margin:16px; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+    h2{ margin:0 0 10px 0; }
     .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    button{
-      padding: 10px 14px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: #fff;
-      cursor: pointer;
-      font-weight: 800;
-    }
+    button{ padding:10px 14px; border-radius:12px; border:1px solid var(--border); background:#fff; cursor:pointer; font-weight:800; }
     button:disabled{ opacity:.6; cursor:not-allowed; }
-    .card{
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 12px;
-      margin-top: 12px;
-      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
-    }
-    video{
-      width: min(520px, 100%);
-      background: #000;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-    }
-    .small{ font-size: 12px; color: var(--muted); }
-    .pill{
-      display:inline-block;
-      font-size:12px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: #f8fbff;
-      color: var(--muted);
-      font-weight: 800;
-    }
-    .good{ color:#0a5a0a; }
-    .bad{ color:#7a0b0b; }
-
-    table{ width:100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
-    th, td{ border-bottom: 1px solid #eef2f7; padding: 8px; text-align: left; vertical-align: top; }
-    th{ color: #334155; }
-
+    .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:12px; margin-top:12px; box-shadow:0 6px 18px rgba(15,23,42,.06); }
+    video{ width:min(520px,100%); background:#000; border-radius:14px; border:1px solid var(--border); }
+    .small{ font-size:12px; color:var(--muted); }
+    .pill{ display:inline-block; font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--border); background:#f8fbff; color:var(--muted); font-weight:800; }
+    input[type="range"]{ width:160px; }
+    table{ width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
+    th,td{ border-bottom:1px solid #eef2f7; padding:8px; text-align:left; vertical-align:top; }
+    th{ color:#334155; }
     #toast{
-      position: fixed;
-      left: 50%;
-      bottom: 16px;
-      transform: translateX(-50%);
-      background: rgba(15, 23, 42, 0.92);
-      color: #fff;
-      padding: 12px 14px;
-      border-radius: 14px;
-      font-weight: 900;
-      display: none;
-      max-width: 92vw;
-      text-align: center;
-      z-index: 9999;
+      position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+      background:rgba(15,23,42,.92); color:#fff; padding:12px 14px; border-radius:14px;
+      font-weight:900; display:none; max-width:92vw; text-align:center; z-index:9999;
     }
   </style>
 </head>
-
 <body>
   <h2>GS1 Scanner</h2>
 
-  <!-- Diagnosebalk -->
   <div class="card" style="margin-top:0;">
     <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">Diagnose</div>
-      <div class="pill" id="buildId">Build: –</div>
+      <span class="pill" id="buildPill">Build: –</span>
     </div>
     <div class="row" style="margin-top:8px;">
       <span class="pill" id="httpsPill">HTTPS: –</span>
       <span class="pill" id="zxingPill">ZXing: –</span>
       <span class="pill" id="videoPill">Video: –</span>
-      <span class="pill" id="fpsPill">Frames/s: –</span>
-      <span class="pill" id="nfPill">NotFound: –</span>
-      <span class="pill" id="errPill">Errors: –</span>
+      <span class="pill" id="nfPill">NotFound: 0</span>
+      <span class="pill" id="errPill">Errors: 0</span>
+      <span class="pill" id="lastDetPill">Last: –</span>
     </div>
     <div class="small" style="margin-top:8px;">
-      Laatste detectie: <span id="lastDet">–</span>
+      Als NotFound snel oploopt, probeert hij wel te scannen maar “ziet” hij de barcode niet scherp/contrasterend genoeg → gebruik Torch + Zoom.
     </div>
   </div>
 
@@ -106,11 +54,19 @@
     <button id="stopBtn" disabled>Stop</button>
     <button id="exportBtn" disabled>Export CSV (Excel)</button>
     <button id="clearBtn" disabled>Leegmaken</button>
-    <span class="pill" id="scanStatus">Status: –</span>
+    <span class="pill" id="statusPill">Status: –</span>
   </div>
 
-  <div class="small" style="margin-top:8px;">
-    Split-barcodes: houd de telefoon even stil zodat zowel GTIN (EAN) als Code128 (THT/LOT/SERIE) gelezen worden.
+  <div class="row" style="margin-top:10px;">
+    <button id="torchBtn" disabled>🔦 Torch</button>
+    <div>
+      <div class="small"><strong>Zoom</strong></div>
+      <input id="zoomSlider" type="range" min="1" max="1" step="0.1" value="1" disabled>
+    </div>
+  </div>
+
+  <div class="small" style="margin-top:6px;">
+    Split-barcodes: boven GTIN/EAN, onder Code128 met (01/17/10/21). Houd even stil zodat beide gelezen worden.
   </div>
 
   <div class="card">
@@ -130,16 +86,9 @@
       <div style="font-weight:900;">Overzicht scans</div>
       <div class="pill">Aantal: <span id="count">0</span></div>
     </div>
-
     <table>
       <thead>
-        <tr>
-          <th>Timestamp</th>
-          <th>GTIN</th>
-          <th>THT</th>
-          <th>LOT</th>
-          <th>SERIE</th>
-        </tr>
+        <tr><th>Timestamp</th><th>GTIN</th><th>THT</th><th>LOT</th><th>SERIE</th></tr>
       </thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -149,415 +98,380 @@
 
   <script src="https://unpkg.com/@zxing/library@0.21.3"></script>
   <script>
-    (() => {
-      // --- UI refs ---
-      const startBtn = document.getElementById("startBtn");
-      const stopBtn  = document.getElementById("stopBtn");
-      const clearBtn = document.getElementById("clearBtn");
-      const exportBtn= document.getElementById("exportBtn");
-      const video = document.getElementById("video");
+  (() => {
+    const $ = (id) => document.getElementById(id);
 
-      const scanStatus = document.getElementById("scanStatus");
-      const toast = document.getElementById("toast");
+    const buildPill=$("buildPill"), httpsPill=$("httpsPill"), zxingPill=$("zxingPill"), videoPill=$("videoPill");
+    const nfPill=$("nfPill"), errPill=$("errPill"), lastDetPill=$("lastDetPill"), statusPill=$("statusPill");
+    const startBtn=$("startBtn"), stopBtn=$("stopBtn"), exportBtn=$("exportBtn"), clearBtn=$("clearBtn");
+    const torchBtn=$("torchBtn"), zoomSlider=$("zoomSlider");
+    const video=$("video"), toast=$("toast");
 
-      const lastGtin = document.getElementById("lastGtin");
-      const lastExpiry = document.getElementById("lastExpiry");
-      const lastLot = document.getElementById("lastLot");
-      const lastSerial = document.getElementById("lastSerial");
-      const lastFormats = document.getElementById("lastFormats");
-      const tbody = document.getElementById("tbody");
-      const countEl = document.getElementById("count");
+    const lastGtin=$("lastGtin"), lastExpiry=$("lastExpiry"), lastLot=$("lastLot"), lastSerial=$("lastSerial"), lastFormats=$("lastFormats");
+    const tbody=$("tbody"), countEl=$("count");
 
-      // Diagnose pills
-      const buildId = document.getElementById("buildId");
-      const httpsPill = document.getElementById("httpsPill");
-      const zxingPill = document.getElementById("zxingPill");
-      const videoPill = document.getElementById("videoPill");
-      const fpsPill = document.getElementById("fpsPill");
-      const nfPill = document.getElementById("nfPill");
-      const errPill = document.getElementById("errPill");
-      const lastDet = document.getElementById("lastDet");
+    const BUILD = new Date().toISOString();
+    buildPill.textContent = "Build: " + BUILD.slice(0,19).replace("T"," ");
 
-      // Unique build id so you SEE you have the latest version
-      const BUILD = new Date().toISOString();
-      buildId.textContent = "Build: " + BUILD.slice(0,19).replace("T"," ");
+    const isHttps = location.protocol === "https:" || location.hostname === "localhost";
+    httpsPill.textContent = "HTTPS: " + (isHttps ? "OK" : "NO");
 
-      function pill(el, label, ok) {
-        el.textContent = label;
-        el.classList.remove("good","bad");
-        el.classList.add(ok ? "good" : "bad");
+    function setStatus(t){ statusPill.textContent = "Status: " + t; }
+    function showToast(msg){
+      toast.textContent = msg || "Artikel gescand. Volgende!";
+      toast.style.display="block";
+      if (navigator.vibrate) navigator.vibrate(80);
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer=setTimeout(()=>toast.style.display="none",950);
+    }
+
+    if (!window.ZXing) {
+      zxingPill.textContent = "ZXing: NO";
+      setStatus("ZXing niet geladen");
+      alert("ZXing niet geladen (content blocker/netwerk).");
+      return;
+    }
+    zxingPill.textContent = "ZXing: YES";
+
+    const { BrowserMultiFormatReader, DecodeHintType } = ZXing;
+
+    // Belangrijk: GEEN POSSIBLE_FORMATS restrictie → meer kans op detectie
+    const hints = new Map();
+    hints.set(DecodeHintType.TRY_HARDER, true);
+    hints.set(DecodeHintType.ASSUME_GS1, true);
+
+    const reader = new BrowserMultiFormatReader(hints);
+
+    let scanning=false;
+    let stream=null;
+    let track=null;
+    let torchOn=false;
+
+    // diag counters
+    let nf=0, otherErr=0;
+
+    // scan log
+    const scanLog=[];
+
+    // capture for split barcodes
+    const CAPTURE_TIMEOUT_MS = 2200;
+    let capture=null; // { gtin, expiry, lot, serial, formats:Set }
+    let captureTimer=null;
+
+    // debounce raw
+    let lastRaw=null, lastRawAt=0;
+
+    // video playing indicator
+    setInterval(()=>{
+      const playing = !!(video && video.srcObject && !video.paused && video.readyState>=2);
+      videoPill.textContent = "Video: " + (playing ? "PLAYING" : "NOT");
+    }, 400);
+
+    function resetCaptureUI(){
+      lastGtin.textContent="–"; lastExpiry.textContent="–"; lastLot.textContent="–"; lastSerial.textContent="–"; lastFormats.textContent="–";
+    }
+    function resetCapture(){
+      capture=null;
+      if (captureTimer) clearTimeout(captureTimer);
+      captureTimer=null;
+      resetCaptureUI();
+    }
+    function ensureCapture(){
+      if (capture) return;
+      capture={gtin:"",expiry:"",lot:"",serial:"",formats:new Set()};
+      if (captureTimer) clearTimeout(captureTimer);
+      captureTimer=setTimeout(()=>{
+        setStatus("Niet compleet — probeer opnieuw");
+        showToast("Niet compleet. Houd beide barcodes in beeld.");
+        resetCapture();
+      }, CAPTURE_TIMEOUT_MS);
+    }
+    function updateLast(){
+      lastGtin.textContent=capture?.gtin||"–";
+      lastExpiry.textContent=capture?.expiry||"–";
+      lastLot.textContent=capture?.lot||"–";
+      lastSerial.textContent=capture?.serial||"–";
+      lastFormats.textContent=capture?.formats?Array.from(capture.formats).join(" + "):"–";
+    }
+
+    function csvEscape(v){
+      const s=String(v??"");
+      return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;
+    }
+    function renderRow(row){
+      const tr=document.createElement("tr");
+      tr.innerHTML=`<td>${row.timestamp}</td><td>${row.gtin||""}</td><td>${row.expiry||""}</td><td>${row.lot||""}</td><td>${row.serial||""}</td>`;
+      tbody.prepend(tr);
+      countEl.textContent=String(scanLog.length);
+      exportBtn.disabled = scanLog.length===0;
+      clearBtn.disabled  = scanLog.length===0;
+    }
+    function exportCSV(){
+      const header=["Timestamp","GTIN","Expiry","Lot","Serial"];
+      const rows=scanLog.map(x=>[x.timestamp,x.gtin,x.expiry,x.lot,x.serial].map(csvEscape).join(","));
+      const csv=[header.join(","),...rows].join("\n");
+      const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;
+      a.download=`gs1_scans_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // GS1 parsing for Code128/DataMatrix strings
+    function normalizeGs1(raw){
+      if(!raw) return "";
+      let s=String(raw);
+      s=s.replace(/^\](C1|c1|d2|D2|Q3|q3|e0|E0)/,"");
+      s=s.replace(/[()\s]/g,"");
+      s=s.replace(/<GS>/gi,"\u001d");
+      return s;
+    }
+    function parseGs1(raw){
+      const GS="\u001d";
+      const s=normalizeGs1(raw);
+
+      const readVar=(startIdx)=>{
+        let out="", i=startIdx;
+        while(i<s.length){
+          const ch=s[i];
+          if(ch===GS) break;
+          const next2=s.slice(i,i+2);
+          if(out.length>0 && ["01","10","11","15","17","21","30","37"].includes(next2)) break;
+          out+=ch; i++;
+        }
+        return out;
+      };
+
+      let gtin="", expiry="", lot="", serial="";
+      let i=0;
+      while(i<s.length){
+        if(s[i]===GS){ i++; continue; }
+        const ai2=s.slice(i,i+2);
+
+        if(ai2==="01"){
+          const v=s.slice(i+2,i+16);
+          if(/^\d{14}$/.test(v)) gtin=v;
+          i+=16; continue;
+        }
+        if(ai2==="17"){
+          const v=s.slice(i+2,i+8);
+          if(/^\d{6}$/.test(v)){
+            const yy=+v.slice(0,2), mm=+v.slice(2,4), dd=+v.slice(4,6);
+            const dt=new Date(2000+yy, mm-1, dd);
+            if(!Number.isNaN(dt.getTime())){
+              const M=String(dt.getMonth()+1).padStart(2,"0");
+              const D=String(dt.getDate()).padStart(2,"0");
+              expiry=`${dt.getFullYear()}-${M}-${D}`;
+            }
+          }
+          i+=8; continue;
+        }
+        if(ai2==="10"){
+          const v=readVar(i+2);
+          if(v) lot=v;
+          i+=2+v.length; continue;
+        }
+        if(ai2==="21"){
+          const v=readVar(i+2);
+          if(v) serial=v;
+          i+=2+v.length; continue;
+        }
+        i+=1;
       }
+      return {gtin, expiry, lot, serial};
+    }
 
-      // HTTPS
-      const isHttps = location.protocol === "https:" || location.hostname === "localhost";
-      pill(httpsPill, "HTTPS: " + (isHttps ? "OK" : "NO"), isHttps);
+    function tryCommit(){
+      if(!capture) return;
+      const hasGtin=!!capture.gtin;
+      const hasDetails=!!(capture.expiry||capture.lot||capture.serial);
+      if(!(hasGtin && hasDetails)) return;
 
-      function showToast(msg){
-        toast.textContent = msg || "Artikel gescand. Volgende!";
-        toast.style.display = "block";
-        if (navigator.vibrate) navigator.vibrate(80);
-        clearTimeout(window.__toastTimer);
-        window.__toastTimer = setTimeout(() => toast.style.display = "none", 950);
-      }
+      const row={ timestamp:new Date().toISOString(), gtin:capture.gtin, expiry:capture.expiry, lot:capture.lot, serial:capture.serial };
+      scanLog.push(row);
+      renderRow(row);
+      setStatus("Gescand ✅");
+      showToast("Artikel gescand. Volgende!");
+      resetCapture();
+    }
 
-      function setStatus(t){ scanStatus.textContent = "Status: " + t; }
+    function handleDecoded(text, fmt){
+      const now=Date.now();
+      if(text===lastRaw && (now-lastRawAt)<180) return;
+      lastRaw=text; lastRawAt=now;
 
-      // ZXing present?
-      if (!window.ZXing) {
-        pill(zxingPill, "ZXing: NO (blocked?)", false);
-        setStatus("ZXing niet geladen");
-        alert("ZXing library is niet geladen. Zet content blockers uit en refresh.");
+      ensureCapture();
+
+      const fmtName = (ZXing.BarcodeFormat && ZXing.BarcodeFormat[fmt]) ? ZXing.BarcodeFormat[fmt] : String(fmt);
+      capture.formats.add(fmtName);
+      lastDetPill.textContent = "Last: " + fmtName;
+
+      // GTIN: EAN/UPC typically are plain digits; easiest heuristic: EAN formats or 8/12/13/14 digits.
+      if (fmtName === "EAN_13" || fmtName === "EAN_8" || fmtName === "UPC_A" || fmtName === "UPC_E") {
+        capture.gtin = String(text);
+        updateLast();
+        setStatus("GTIN gezien — wacht op THT/LOT/SERIE…");
         return;
-      } else {
-        pill(zxingPill, "ZXing: YES", true);
       }
 
-      const { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } = ZXing;
+      // Details: parse GS1 AIs from Code128/DataMatrix/QR etc
+      const parsed=parseGs1(text);
+      if(parsed.gtin) capture.gtin=parsed.gtin;
+      if(parsed.expiry) capture.expiry=parsed.expiry;
+      if(parsed.lot) capture.lot=parsed.lot;
+      if(parsed.serial) capture.serial=parsed.serial;
 
-      const hints = new Map();
-      hints.set(DecodeHintType.TRY_HARDER, true);
-      hints.set(DecodeHintType.ASSUME_GS1, true);
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-        BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
-        BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.ITF,
-        BarcodeFormat.DATA_MATRIX, BarcodeFormat.QR_CODE,
-        BarcodeFormat.PDF_417, BarcodeFormat.AZTEC, BarcodeFormat.CODABAR
-      ]);
+      updateLast();
 
-      const reader = new BrowserMultiFormatReader(hints);
+      const hasDetails=!!(capture.expiry||capture.lot||capture.serial);
+      const hasGtin=!!capture.gtin;
+      if(hasDetails && !hasGtin) setStatus("Details gezien — wacht op GTIN…");
+      else setStatus("Samenvoegen…");
 
-      let scanning = false;
-      let stream = null;
+      tryCommit();
+    }
 
-      // Diagnostics counters
-      let notFoundCount = 0;
-      let otherErrCount = 0;
-      let lastOtherErr = "";
-      let frameHits = 0;
-      let frameWindowStart = Date.now();
+    async function applyTorch(on){
+      if(!track) return;
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if(!caps.torch) return;
+      await track.applyConstraints({ advanced:[{ torch: !!on }] });
+    }
 
-      function updateDiag() {
-        nfPill.textContent = "NotFound: " + notFoundCount;
-        errPill.textContent = "Errors: " + otherErrCount + (lastOtherErr ? (" (" + lastOtherErr + ")") : "");
-      }
+    async function applyZoom(z){
+      if(!track) return;
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if(!caps.zoom) return;
+      const val = Math.max(caps.zoom.min, Math.min(caps.zoom.max, z));
+      await track.applyConstraints({ advanced:[{ zoom: val }] });
+    }
 
-      // Video playing indicator (poll)
-      setInterval(() => {
-        const playing = !!(video && video.srcObject && !video.paused && video.readyState >= 2);
-        pill(videoPill, "Video: " + (playing ? "PLAYING" : "NOT"), playing);
-      }, 400);
+    async function start(){
+      if(scanning) return;
+      scanning=true;
+      startBtn.disabled=true;
+      stopBtn.disabled=false;
+      setStatus("Starten…");
+      nf=0; otherErr=0;
+      nfPill.textContent="NotFound: 0";
+      errPill.textContent="Errors: 0";
+      lastDetPill.textContent="Last: –";
+      resetCapture();
 
-      // FPS-ish indicator (how often callback fires)
-      setInterval(() => {
-        const now = Date.now();
-        const secs = (now - frameWindowStart) / 1000;
-        const fps = secs > 0 ? (frameHits / secs) : 0;
-        fpsPill.textContent = "Frames/s: " + fps.toFixed(1);
-        // reset window
-        frameHits = 0;
-        frameWindowStart = now;
-      }, 1000);
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal:"environment" },
+            width: { ideal: 1920 },
+            height:{ ideal: 1080 }
+          },
+          audio:false
+        });
 
-      // Scanlog
-      const scanLog = [];
+        video.srcObject=stream;
+        await video.play();
 
-      // Merge/capture voor split barcodes
-      const CAPTURE_TIMEOUT_MS = 2200;
-      let capture = null; // { gtin, expiry, lot, serial, formats:Set }
-      let captureTimer = null;
+        track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
 
-      // Debounce identical reads
-      let lastRaw = null;
-      let lastRawAt = 0;
+        // torch/zoom UI enable
+        torchBtn.disabled = !caps.torch;
+        zoomSlider.disabled = !caps.zoom;
 
-      function resetCaptureUI(){
-        lastGtin.textContent = "–";
-        lastExpiry.textContent = "–";
-        lastLot.textContent = "–";
-        lastSerial.textContent = "–";
-        lastFormats.textContent = "–";
-      }
+        if(caps.zoom){
+          zoomSlider.min = caps.zoom.min;
+          zoomSlider.max = caps.zoom.max;
+          zoomSlider.step = caps.zoom.step || 0.1;
+          const st = track.getSettings ? track.getSettings() : {};
+          zoomSlider.value = st.zoom || caps.zoom.min || 1;
+        } else {
+          zoomSlider.value = 1;
+        }
 
-      function resetCapture(){
-        capture = null;
-        if (captureTimer) clearTimeout(captureTimer);
-        captureTimer = null;
-        resetCaptureUI();
-      }
+        setStatus("Scannen…");
 
-      function ensureCapture(){
-        if (capture) return;
-        capture = { gtin:"", expiry:"", lot:"", serial:"", formats:new Set() };
-        if (captureTimer) clearTimeout(captureTimer);
-        captureTimer = setTimeout(() => {
-          setStatus("Niet compleet — probeer opnieuw");
-          showToast("Niet compleet. Houd beide barcodes in beeld.");
-          resetCapture();
-        }, CAPTURE_TIMEOUT_MS);
-      }
+        // iPhone-stabiel: decode from playing video element
+        reader.decodeFromVideoElementContinuously(video, (result, err) => {
+          if(!scanning) return;
 
-      function updateLast(){
-        lastGtin.textContent = capture?.gtin || "–";
-        lastExpiry.textContent = capture?.expiry || "–";
-        lastLot.textContent = capture?.lot || "–";
-        lastSerial.textContent = capture?.serial || "–";
-        lastFormats.textContent = capture?.formats ? Array.from(capture.formats).join(" + ") : "–";
-      }
-
-      function csvEscape(v){
-        const s = String(v ?? "");
-        return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
-      }
-
-      function renderRow(row){
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${row.timestamp}</td>
-          <td>${row.gtin || ""}</td>
-          <td>${row.expiry || ""}</td>
-          <td>${row.lot || ""}</td>
-          <td>${row.serial || ""}</td>`;
-        tbody.prepend(tr);
-        countEl.textContent = String(scanLog.length);
-        exportBtn.disabled = scanLog.length === 0;
-        clearBtn.disabled = scanLog.length === 0;
-      }
-
-      function exportCSV(){
-        const header = ["Timestamp","GTIN","Expiry","Lot","Serial"];
-        const rows = scanLog.map(x => [x.timestamp, x.gtin, x.expiry, x.lot, x.serial].map(csvEscape).join(","));
-        const csv = [header.join(","), ...rows].join("\n");
-        const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `gs1_scans_${new Date().toISOString().slice(0,10)}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-
-      function normalizeGs1(raw){
-        if (!raw) return "";
-        let s = String(raw);
-        s = s.replace(/^\](C1|c1|d2|D2|Q3|q3|e0|E0)/, "");
-        s = s.replace(/[()\s]/g, "");
-        s = s.replace(/<GS>/gi, "\u001d");
-        return s;
-      }
-
-      function parseGs1(raw){
-        const GS = "\u001d";
-        const s = normalizeGs1(raw);
-
-        const readVar = (startIdx) => {
-          let out = "", i = startIdx;
-          while (i < s.length) {
-            const ch = s[i];
-            if (ch === GS) break;
-            const next2 = s.slice(i, i+2);
-            if (out.length > 0 && ["01","10","11","15","17","21","30","37"].includes(next2)) break;
-            out += ch; i++;
-          }
-          return out;
-        };
-
-        let gtin="", expiry="", lot="", serial="";
-        let i=0;
-        while (i < s.length) {
-          if (s[i] === GS) { i++; continue; }
-          const ai2 = s.slice(i, i+2);
-
-          if (ai2 === "01") {
-            const v = s.slice(i+2, i+16);
-            if (/^\d{14}$/.test(v)) gtin = v;
-            i += 16; continue;
-          }
-          if (ai2 === "17") {
-            const v = s.slice(i+2, i+8);
-            if (/^\d{6}$/.test(v)) {
-              const yy = parseInt(v.slice(0,2),10);
-              const mm = parseInt(v.slice(2,4),10);
-              const dd = parseInt(v.slice(4,6),10);
-              const dt = new Date(2000+yy, mm-1, dd);
-              if (!Number.isNaN(dt.getTime())) {
-                const M = String(dt.getMonth()+1).padStart(2,"0");
-                const D = String(dt.getDate()).padStart(2,"0");
-                expiry = `${dt.getFullYear()}-${M}-${D}`;
-              }
+          if(result){
+            handleDecoded(result.getText(), result.getBarcodeFormat());
+          } else if(err && err.name){
+            if(err.name === "NotFoundException"){
+              nf++;
+              if(nf % 20 === 0) nfPill.textContent = "NotFound: " + nf;
+            } else {
+              otherErr++;
+              errPill.textContent = "Errors: " + otherErr + " (" + err.name + ")";
             }
-            i += 8; continue;
           }
-          if (ai2 === "10") {
-            const v = readVar(i+2);
-            if (v) lot = v;
-            i += 2 + v.length; continue;
-          }
-          if (ai2 === "21") {
-            const v = readVar(i+2);
-            if (v) serial = v;
-            i += 2 + v.length; continue;
-          }
+        });
 
-          i += 1;
-        }
-        return { gtin, expiry, lot, serial };
+      } catch(e){
+        scanning=false;
+        startBtn.disabled=false;
+        stopBtn.disabled=true;
+        setStatus("Fout");
+        alert("Kan camera niet starten. Check Safari camera permissies en open via HTTPS.\n\n" + (e?.message || e));
       }
+    }
 
-      function formatName(fmt){
-        return (ZXing.BarcodeFormat && ZXing.BarcodeFormat[fmt]) ? ZXing.BarcodeFormat[fmt] : String(fmt);
+    function stop(){
+      scanning=false;
+      startBtn.disabled=false;
+      stopBtn.disabled=true;
+      setStatus("Gestopt");
+      torchOn=false;
+
+      try{ reader.reset(); }catch(e){}
+
+      const s=video.srcObject;
+      if(s) s.getTracks().forEach(t=>t.stop());
+      video.srcObject=null;
+      stream=null; track=null;
+
+      torchBtn.disabled=true;
+      zoomSlider.disabled=true;
+      resetCapture();
+    }
+
+    function clear(){
+      scanLog.length=0;
+      tbody.innerHTML="";
+      countEl.textContent="0";
+      exportBtn.disabled=true;
+      clearBtn.disabled=true;
+      setStatus("Leeg");
+      showToast("Overzicht geleegd");
+    }
+
+    // Buttons
+    startBtn.addEventListener("click", start);
+    stopBtn.addEventListener("click", stop);
+    exportBtn.addEventListener("click", exportCSV);
+    clearBtn.addEventListener("click", clear);
+
+    torchBtn.addEventListener("click", async () => {
+      if(!track) return;
+      torchOn=!torchOn;
+      try{
+        await applyTorch(torchOn);
+        showToast(torchOn ? "Torch aan" : "Torch uit");
+      }catch(e){
+        torchOn=false;
+        showToast("Torch niet beschikbaar");
       }
+    });
 
-      function tryCommit(){
-        if (!capture) return;
-        const hasGtin = !!capture.gtin;
-        const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
-        if (!(hasGtin && hasDetails)) return;
+    zoomSlider.addEventListener("input", async () => {
+      if(!track) return;
+      try{ await applyZoom(parseFloat(zoomSlider.value)); }catch(e){}
+    });
 
-        const row = {
-          timestamp: new Date().toISOString(),
-          gtin: capture.gtin,
-          expiry: capture.expiry,
-          lot: capture.lot,
-          serial: capture.serial
-        };
-
-        scanLog.push(row);
-        renderRow(row);
-
-        setStatus("Gescand ✅");
-        showToast("Artikel gescand. Volgende!");
-        lastDet.textContent = "COMMIT";
-        resetCapture();
-      }
-
-      function handleDecoded(text, fmt){
-        // debounce identical
-        const now = Date.now();
-        if (text === lastRaw && (now - lastRawAt) < 180) return;
-        lastRaw = text;
-        lastRawAt = now;
-
-        ensureCapture();
-
-        const fmtN = formatName(fmt);
-        capture.formats.add(fmtN);
-        updateLast();
-
-        lastDet.textContent = fmtN + " • " + String(text).slice(0, 60);
-
-        // GTIN barcode
-        if (fmtN === "EAN_13" || fmtN === "EAN_8" || fmtN === "UPC_A" || fmtN === "UPC_E") {
-          capture.gtin = String(text);
-          updateLast();
-          setStatus("GTIN gezien — wacht op THT/LOT/SERIE…");
-          return;
-        }
-
-        // details barcode
-        const parsed = parseGs1(text);
-        if (parsed.gtin) capture.gtin = parsed.gtin;
-        if (parsed.expiry) capture.expiry = parsed.expiry;
-        if (parsed.lot) capture.lot = parsed.lot;
-        if (parsed.serial) capture.serial = parsed.serial;
-
-        updateLast();
-
-        const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
-        const hasGtin = !!capture.gtin;
-        if (hasDetails && !hasGtin) setStatus("Details gezien — wacht op GTIN…");
-        else setStatus("Samenvoegen…");
-
-        tryCommit();
-      }
-
-      async function start(){
-        if (scanning) return;
-        scanning = true;
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        setStatus("Starten…");
-        resetCapture();
-        notFoundCount = 0;
-        otherErrCount = 0;
-        lastOtherErr = "";
-        updateDiag();
-
-        try{
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: { ideal: "environment" },
-              width:  { ideal: 1920 },
-              height: { ideal: 1080 }
-            },
-            audio: false
-          });
-
-          video.srcObject = stream;
-          await video.play();
-
-          setStatus("Scannen…");
-
-          reader.decodeFromVideoElementContinuously(video, (result, err) => {
-            if (!scanning) return;
-
-            frameHits++;
-
-            if (result) {
-              handleDecoded(result.getText(), result.getBarcodeFormat());
-            } else if (err && err.name) {
-              if (err.name === "NotFoundException") {
-                notFoundCount++;
-                if (notFoundCount % 25 === 0) updateDiag();
-              } else {
-                otherErrCount++;
-                lastOtherErr = err.name;
-                updateDiag();
-              }
-            }
-          });
-
-        } catch(e){
-          scanning = false;
-          startBtn.disabled = false;
-          stopBtn.disabled = true;
-          setStatus("Fout");
-          alert("Kan camera niet starten. Check Safari camera permissies en open via HTTPS.\n\n" + (e?.message || e));
-        }
-      }
-
-      function stop(){
-        scanning = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        setStatus("Gestopt");
-        resetCapture();
-
-        try { reader.reset(); } catch(e){}
-
-        const s = video.srcObject;
-        if (s) s.getTracks().forEach(t => t.stop());
-        video.srcObject = null;
-        stream = null;
-      }
-
-      function clear(){
-        scanLog.length = 0;
-        tbody.innerHTML = "";
-        countEl.textContent = "0";
-        exportBtn.disabled = true;
-        clearBtn.disabled = true;
-        setStatus("Leeg");
-        showToast("Overzicht geleegd");
-      }
-
-      startBtn.addEventListener("click", start);
-      stopBtn.addEventListener("click", stop);
-      clearBtn.addEventListener("click", clear);
-      exportBtn.addEventListener("click", exportCSV);
-
-      setStatus("–");
-      updateDiag();
-    })();
+    setStatus("–");
+  })();
   </script>
 </body>
 </html>
