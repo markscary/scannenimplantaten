@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>GS1 Scanner</title>
   <style>
-    :root{
-      --bg:#d7efff; --card:#fff; --border:#cfe3f3; --text:#0f172a; --muted:#475569;
-    }
+    :root{ --bg:#d7efff; --card:#fff; --border:#cfe3f3; --text:#0f172a; --muted:#475569; }
     body{ margin:16px; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
     h2{ margin:0 0 10px 0; }
     .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
@@ -17,7 +15,6 @@
     video{ width:min(520px,100%); background:#000; border-radius:14px; border:1px solid var(--border); }
     .small{ font-size:12px; color:var(--muted); }
     .pill{ display:inline-block; font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--border); background:#f8fbff; color:var(--muted); font-weight:800; }
-    input[type="range"]{ width:160px; }
     table{ width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
     th,td{ border-bottom:1px solid #eef2f7; padding:8px; text-align:left; vertical-align:top; }
     th{ color:#334155; }
@@ -26,6 +23,7 @@
       background:rgba(15,23,42,.92); color:#fff; padding:12px 14px; border-radius:14px;
       font-weight:900; display:none; max-width:92vw; text-align:center; z-index:9999;
     }
+    pre{ margin:0; white-space:pre-wrap; word-break:break-word; background:#f7fbff; border:1px solid #e6f2ff; padding:10px; border-radius:12px; }
   </style>
 </head>
 <body>
@@ -33,19 +31,21 @@
 
   <div class="card" style="margin-top:0;">
     <div class="row" style="justify-content:space-between;">
-      <div style="font-weight:900;">Diagnose</div>
+      <div style="font-weight:900;">Diagnose (moet bewegen)</div>
       <span class="pill" id="buildPill">Build: –</span>
     </div>
     <div class="row" style="margin-top:8px;">
       <span class="pill" id="httpsPill">HTTPS: –</span>
       <span class="pill" id="zxingPill">ZXing: –</span>
       <span class="pill" id="videoPill">Video: –</span>
+      <span class="pill" id="metaPill">Meta: –</span>
+      <span class="pill" id="beatPill">Heartbeat: 0</span>
       <span class="pill" id="nfPill">NotFound: 0</span>
-      <span class="pill" id="errPill">Errors: 0</span>
-      <span class="pill" id="lastDetPill">Last: –</span>
+      <span class="pill" id="errPill">Err: –</span>
+      <span class="pill" id="lastPill">Last: –</span>
     </div>
     <div class="small" style="margin-top:8px;">
-      Als NotFound snel oploopt, probeert hij wel te scannen maar “ziet” hij de barcode niet scherp/contrasterend genoeg → gebruik Torch + Zoom.
+      Als <strong>Heartbeat</strong> niet oploopt na Start, draait de scan-loop niet (dan is dit geen “barcode scherpte”-probleem).
     </div>
   </div>
 
@@ -57,16 +57,8 @@
     <span class="pill" id="statusPill">Status: –</span>
   </div>
 
-  <div class="row" style="margin-top:10px;">
-    <button id="torchBtn" disabled>🔦 Torch</button>
-    <div>
-      <div class="small"><strong>Zoom</strong></div>
-      <input id="zoomSlider" type="range" min="1" max="1" step="0.1" value="1" disabled>
-    </div>
-  </div>
-
   <div class="small" style="margin-top:6px;">
-    Split-barcodes: boven GTIN/EAN, onder Code128 met (01/17/10/21). Houd even stil zodat beide gelezen worden.
+    Split barcodes: boven GTIN/EAN, onder Code128 met (17)(10)(21) → de app wacht op beide en logt 1 regel.
   </div>
 
   <div class="card">
@@ -87,11 +79,14 @@
       <div class="pill">Aantal: <span id="count">0</span></div>
     </div>
     <table>
-      <thead>
-        <tr><th>Timestamp</th><th>GTIN</th><th>THT</th><th>LOT</th><th>SERIE</th></tr>
-      </thead>
+      <thead><tr><th>Timestamp</th><th>GTIN</th><th>THT</th><th>LOT</th><th>SERIE</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:900;">Debug log (laatste regels)</div>
+    <pre id="log">–</pre>
   </div>
 
   <div id="toast">Artikel gescand. Volgende!</div>
@@ -102,10 +97,11 @@
     const $ = (id) => document.getElementById(id);
 
     const buildPill=$("buildPill"), httpsPill=$("httpsPill"), zxingPill=$("zxingPill"), videoPill=$("videoPill");
-    const nfPill=$("nfPill"), errPill=$("errPill"), lastDetPill=$("lastDetPill"), statusPill=$("statusPill");
+    const metaPill=$("metaPill"), beatPill=$("beatPill"), nfPill=$("nfPill"), errPill=$("errPill"), lastPill=$("lastPill");
+    const statusPill=$("statusPill");
+
     const startBtn=$("startBtn"), stopBtn=$("stopBtn"), exportBtn=$("exportBtn"), clearBtn=$("clearBtn");
-    const torchBtn=$("torchBtn"), zoomSlider=$("zoomSlider");
-    const video=$("video"), toast=$("toast");
+    const video=$("video"), toast=$("toast"), logEl=$("log");
 
     const lastGtin=$("lastGtin"), lastExpiry=$("lastExpiry"), lastLot=$("lastLot"), lastSerial=$("lastSerial"), lastFormats=$("lastFormats");
     const tbody=$("tbody"), countEl=$("count");
@@ -117,6 +113,7 @@
     httpsPill.textContent = "HTTPS: " + (isHttps ? "OK" : "NO");
 
     function setStatus(t){ statusPill.textContent = "Status: " + t; }
+
     function showToast(msg){
       toast.textContent = msg || "Artikel gescand. Volgende!";
       toast.style.display="block";
@@ -125,17 +122,24 @@
       window.__toastTimer=setTimeout(()=>toast.style.display="none",950);
     }
 
+    const logLines = [];
+    function log(msg){
+      const line = new Date().toISOString().slice(11,19) + "  " + msg;
+      logLines.push(line);
+      while (logLines.length > 12) logLines.shift();
+      logEl.textContent = logLines.join("\n");
+    }
+
     if (!window.ZXing) {
       zxingPill.textContent = "ZXing: NO";
       setStatus("ZXing niet geladen");
-      alert("ZXing niet geladen (content blocker/netwerk).");
+      log("ZXing ontbreekt (content blocker/netwerk).");
       return;
     }
     zxingPill.textContent = "ZXing: YES";
 
     const { BrowserMultiFormatReader, DecodeHintType } = ZXing;
 
-    // Belangrijk: GEEN POSSIBLE_FORMATS restrictie → meer kans op detectie
     const hints = new Map();
     hints.set(DecodeHintType.TRY_HARDER, true);
     hints.set(DecodeHintType.ASSUME_GS1, true);
@@ -144,38 +148,35 @@
 
     let scanning=false;
     let stream=null;
-    let track=null;
-    let torchOn=false;
 
-    // diag counters
-    let nf=0, otherErr=0;
+    // Counters
+    let heartbeat=0;
+    let notFound=0;
+    let lastErr="-";
 
-    // scan log
-    const scanLog=[];
-
-    // capture for split barcodes
+    // merge/capture
     const CAPTURE_TIMEOUT_MS = 2200;
     let capture=null; // { gtin, expiry, lot, serial, formats:Set }
     let captureTimer=null;
 
-    // debounce raw
+    // debounce
     let lastRaw=null, lastRawAt=0;
 
-    // video playing indicator
-    setInterval(()=>{
-      const playing = !!(video && video.srcObject && !video.paused && video.readyState>=2);
-      videoPill.textContent = "Video: " + (playing ? "PLAYING" : "NOT");
-    }, 400);
-
     function resetCaptureUI(){
-      lastGtin.textContent="–"; lastExpiry.textContent="–"; lastLot.textContent="–"; lastSerial.textContent="–"; lastFormats.textContent="–";
+      lastGtin.textContent="–";
+      lastExpiry.textContent="–";
+      lastLot.textContent="–";
+      lastSerial.textContent="–";
+      lastFormats.textContent="–";
     }
+
     function resetCapture(){
       capture=null;
       if (captureTimer) clearTimeout(captureTimer);
       captureTimer=null;
       resetCaptureUI();
     }
+
     function ensureCapture(){
       if (capture) return;
       capture={gtin:"",expiry:"",lot:"",serial:"",formats:new Set()};
@@ -183,9 +184,11 @@
       captureTimer=setTimeout(()=>{
         setStatus("Niet compleet — probeer opnieuw");
         showToast("Niet compleet. Houd beide barcodes in beeld.");
+        log("capture timeout (niet compleet)");
         resetCapture();
       }, CAPTURE_TIMEOUT_MS);
     }
+
     function updateLast(){
       lastGtin.textContent=capture?.gtin||"–";
       lastExpiry.textContent=capture?.expiry||"–";
@@ -198,6 +201,8 @@
       const s=String(v??"");
       return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;
     }
+
+    const scanLog=[];
     function renderRow(row){
       const tr=document.createElement("tr");
       tr.innerHTML=`<td>${row.timestamp}</td><td>${row.gtin||""}</td><td>${row.expiry||""}</td><td>${row.lot||""}</td><td>${row.serial||""}</td>`;
@@ -206,6 +211,7 @@
       exportBtn.disabled = scanLog.length===0;
       clearBtn.disabled  = scanLog.length===0;
     }
+
     function exportCSV(){
       const header=["Timestamp","GTIN","Expiry","Lot","Serial"];
       const rows=scanLog.map(x=>[x.timestamp,x.gtin,x.expiry,x.lot,x.serial].map(csvEscape).join(","));
@@ -219,7 +225,7 @@
       URL.revokeObjectURL(url);
     }
 
-    // GS1 parsing for Code128/DataMatrix strings
+    // GS1 parsing
     function normalizeGs1(raw){
       if(!raw) return "";
       let s=String(raw);
@@ -228,6 +234,7 @@
       s=s.replace(/<GS>/gi,"\u001d");
       return s;
     }
+
     function parseGs1(raw){
       const GS="\u001d";
       const s=normalizeGs1(raw);
@@ -283,6 +290,10 @@
       return {gtin, expiry, lot, serial};
     }
 
+    function fmtName(fmt){
+      return (ZXing.BarcodeFormat && ZXing.BarcodeFormat[fmt]) ? ZXing.BarcodeFormat[fmt] : String(fmt);
+    }
+
     function tryCommit(){
       if(!capture) return;
       const hasGtin=!!capture.gtin;
@@ -292,8 +303,10 @@
       const row={ timestamp:new Date().toISOString(), gtin:capture.gtin, expiry:capture.expiry, lot:capture.lot, serial:capture.serial };
       scanLog.push(row);
       renderRow(row);
+
       setStatus("Gescand ✅");
       showToast("Artikel gescand. Volgende!");
+      log("COMMIT gtin=" + row.gtin);
       resetCapture();
     }
 
@@ -304,48 +317,62 @@
 
       ensureCapture();
 
-      const fmtName = (ZXing.BarcodeFormat && ZXing.BarcodeFormat[fmt]) ? ZXing.BarcodeFormat[fmt] : String(fmt);
-      capture.formats.add(fmtName);
-      lastDetPill.textContent = "Last: " + fmtName;
+      const f = fmtName(fmt);
+      capture.formats.add(f);
+      lastPill.textContent = "Last: " + f;
+      log("decoded " + f + "  " + String(text).slice(0,30));
 
-      // GTIN: EAN/UPC typically are plain digits; easiest heuristic: EAN formats or 8/12/13/14 digits.
-      if (fmtName === "EAN_13" || fmtName === "EAN_8" || fmtName === "UPC_A" || fmtName === "UPC_E") {
+      // If EAN/UPC: treat as GTIN
+      if (f==="EAN_13" || f==="EAN_8" || f==="UPC_A" || f==="UPC_E") {
         capture.gtin = String(text);
         updateLast();
-        setStatus("GTIN gezien — wacht op THT/LOT/SERIE…");
+        setStatus("GTIN gezien — wacht op details…");
         return;
       }
 
-      // Details: parse GS1 AIs from Code128/DataMatrix/QR etc
-      const parsed=parseGs1(text);
-      if(parsed.gtin) capture.gtin=parsed.gtin;
-      if(parsed.expiry) capture.expiry=parsed.expiry;
-      if(parsed.lot) capture.lot=parsed.lot;
-      if(parsed.serial) capture.serial=parsed.serial;
+      // Otherwise parse GS1 AIs
+      const p=parseGs1(text);
+      if(p.gtin) capture.gtin=p.gtin;
+      if(p.expiry) capture.expiry=p.expiry;
+      if(p.lot) capture.lot=p.lot;
+      if(p.serial) capture.serial=p.serial;
 
       updateLast();
 
       const hasDetails=!!(capture.expiry||capture.lot||capture.serial);
       const hasGtin=!!capture.gtin;
-      if(hasDetails && !hasGtin) setStatus("Details gezien — wacht op GTIN…");
-      else setStatus("Samenvoegen…");
+      setStatus(hasDetails && !hasGtin ? "Details gezien — wacht op GTIN…" : "Samenvoegen…");
 
       tryCommit();
     }
 
-    async function applyTorch(on){
-      if(!track) return;
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      if(!caps.torch) return;
-      await track.applyConstraints({ advanced:[{ torch: !!on }] });
-    }
+    // --- The key: our OWN scan loop ---
+    async function scanLoop(){
+      while(scanning){
+        heartbeat++;
+        beatPill.textContent = "Heartbeat: " + heartbeat;
 
-    async function applyZoom(z){
-      if(!track) return;
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      if(!caps.zoom) return;
-      const val = Math.max(caps.zoom.min, Math.min(caps.zoom.max, z));
-      await track.applyConstraints({ advanced:[{ zoom: val }] });
+        // update video meta
+        metaPill.textContent = `Meta: rs=${video.readyState} ${video.videoWidth}x${video.videoHeight}`;
+
+        try{
+          const res = await reader.decodeOnceFromVideoElement(video);
+          // got one
+          handleDecoded(res.getText(), res.getBarcodeFormat());
+        } catch(e){
+          // NotFound is normal; count it
+          if (e && (e.name === "NotFoundException" || String(e).includes("NotFoundException"))) {
+            notFound++;
+            nfPill.textContent = "NotFound: " + notFound;
+          } else {
+            lastErr = e?.name ? (e.name + (e.message ? ": "+e.message : "")) : String(e);
+            errPill.textContent = "Err: " + lastErr.slice(0,40);
+          }
+        }
+
+        // tiny delay keeps Safari stable
+        await new Promise(r => setTimeout(r, 35));
+      }
     }
 
     async function start(){
@@ -354,67 +381,38 @@
       startBtn.disabled=true;
       stopBtn.disabled=false;
       setStatus("Starten…");
-      nf=0; otherErr=0;
-      nfPill.textContent="NotFound: 0";
-      errPill.textContent="Errors: 0";
-      lastDetPill.textContent="Last: –";
       resetCapture();
+
+      heartbeat=0; notFound=0; lastErr="-";
+      beatPill.textContent="Heartbeat: 0";
+      nfPill.textContent="NotFound: 0";
+      errPill.textContent="Err: –";
+      lastPill.textContent="Last: –";
+      log("Start pressed");
 
       try{
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal:"environment" },
-            width: { ideal: 1920 },
-            height:{ ideal: 1080 }
-          },
+          video: { facingMode:{ideal:"environment"}, width:{ideal:1920}, height:{ideal:1080} },
           audio:false
         });
+        video.srcObject = stream;
 
-        video.srcObject=stream;
+        // important: ensure play resolves
         await video.play();
 
-        track = stream.getVideoTracks()[0];
-        const caps = track.getCapabilities ? track.getCapabilities() : {};
-
-        // torch/zoom UI enable
-        torchBtn.disabled = !caps.torch;
-        zoomSlider.disabled = !caps.zoom;
-
-        if(caps.zoom){
-          zoomSlider.min = caps.zoom.min;
-          zoomSlider.max = caps.zoom.max;
-          zoomSlider.step = caps.zoom.step || 0.1;
-          const st = track.getSettings ? track.getSettings() : {};
-          zoomSlider.value = st.zoom || caps.zoom.min || 1;
-        } else {
-          zoomSlider.value = 1;
-        }
-
         setStatus("Scannen…");
+        log("video.play ok");
 
-        // iPhone-stabiel: decode from playing video element
-        reader.decodeFromVideoElementContinuously(video, (result, err) => {
-          if(!scanning) return;
-
-          if(result){
-            handleDecoded(result.getText(), result.getBarcodeFormat());
-          } else if(err && err.name){
-            if(err.name === "NotFoundException"){
-              nf++;
-              if(nf % 20 === 0) nfPill.textContent = "NotFound: " + nf;
-            } else {
-              otherErr++;
-              errPill.textContent = "Errors: " + otherErr + " (" + err.name + ")";
-            }
-          }
-        });
+        // start scan loop
+        scanLoop();
 
       } catch(e){
         scanning=false;
         startBtn.disabled=false;
         stopBtn.disabled=true;
         setStatus("Fout");
-        alert("Kan camera niet starten. Check Safari camera permissies en open via HTTPS.\n\n" + (e?.message || e));
+        log("start failed: " + (e?.message || e));
+        alert("Start mislukt. Check Safari camera permissies.\n\n" + (e?.message || e));
       }
     }
 
@@ -423,17 +421,15 @@
       startBtn.disabled=false;
       stopBtn.disabled=true;
       setStatus("Gestopt");
-      torchOn=false;
+      log("Stop pressed");
 
       try{ reader.reset(); }catch(e){}
 
       const s=video.srcObject;
       if(s) s.getTracks().forEach(t=>t.stop());
       video.srcObject=null;
-      stream=null; track=null;
+      stream=null;
 
-      torchBtn.disabled=true;
-      zoomSlider.disabled=true;
       resetCapture();
     }
 
@@ -445,32 +441,27 @@
       clearBtn.disabled=true;
       setStatus("Leeg");
       showToast("Overzicht geleegd");
+      log("Cleared log");
     }
 
-    // Buttons
+    // UI events
     startBtn.addEventListener("click", start);
     stopBtn.addEventListener("click", stop);
     exportBtn.addEventListener("click", exportCSV);
     clearBtn.addEventListener("click", clear);
 
-    torchBtn.addEventListener("click", async () => {
-      if(!track) return;
-      torchOn=!torchOn;
-      try{
-        await applyTorch(torchOn);
-        showToast(torchOn ? "Torch aan" : "Torch uit");
-      }catch(e){
-        torchOn=false;
-        showToast("Torch niet beschikbaar");
-      }
-    });
+    // enable/disable clear/export initially
+    exportBtn.disabled=true;
+    clearBtn.disabled=true;
 
-    zoomSlider.addEventListener("input", async () => {
-      if(!track) return;
-      try{ await applyZoom(parseFloat(zoomSlider.value)); }catch(e){}
-    });
+    // video pill
+    setInterval(()=>{
+      const playing = !!(video && video.srcObject && !video.paused && video.readyState>=2);
+      videoPill.textContent = "Video: " + (playing ? "PLAYING" : "NOT");
+    }, 400);
 
     setStatus("–");
+    log("Ready");
   })();
   </script>
 </body>
