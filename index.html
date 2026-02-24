@@ -37,13 +37,13 @@
       <video id="video" muted playsinline></video>
       <div>
         <div><strong>Last scan</strong></div>
-        <div class="small">Tip: scan the GS1 DataMatrix (UDI) to get expiry (AI 17).</div>
+        <div class="small">Tip: scan the GS1 UDI (often DataMatrix) to read expiry (AI 17).</div>
         <div style="margin-top:8px;">
           <div>Type: <span id="lastType">–</span></div>
           <div>GTIN: <span id="lastGtin">–</span></div>
           <div>Expiry: <span id="lastExpiry">–</span></div>
           <div>Status: <span id="lastStatus" class="badge unk">–</span></div>
-          <div class="small" style="margin-top:8px;">If Start does nothing: open the page in Safari (not inside the GitHub app), and allow camera access.</div>
+          <div class="small" style="margin-top:8px;">If Start does nothing: open in Safari (not inside GitHub app) and allow camera access.</div>
         </div>
       </div>
     </div>
@@ -182,12 +182,14 @@
 
       /**
        * Minimal GS1 AI parser for common UDI content:
-       * (01) GTIN (14 fixed)
-       * (17) Expiry YYMMDD (6 fixed)
-       * (10) LOT (variable, ends at GS)
-       * (21) SERIAL (variable, ends at GS)
+       * 01 GTIN (14 fixed)
+       * 17 Expiry YYMMDD (6 fixed)
+       * 10 LOT (variable, ends at GS)
+       * 21 SERIAL (variable, ends at GS)
        *
-       * Many scanners output the "GS" group separator as ASCII 29 (\u001d).
+       * Notes:
+       * - Many scanners output GS (FNC1 group separator) as ASCII 29 (\u001d).
+       * - Some scanners replace GS with other separators; raw is stored so you can adjust later.
        */
       function parseGs1(raw) {
         const GS = "\u001d";
@@ -207,9 +209,11 @@
           while (i < s.length) {
             const ch = s[i];
             if (ch === GS) break;
-            // Heuristic: stop if next characters look like a new AI and we already collected something
+
+            // Simple heuristic: stop if we hit a known AI boundary and already collected something
             const next2 = s.slice(i, i+2);
             if (out.length > 0 && ["01","10","17","21","11","15","30","37"].includes(next2)) break;
+
             out += ch;
             i++;
           }
@@ -229,8 +233,7 @@
           const yyyy = 2000 + yy;
 
           if (dd === 0) {
-            // last day of month
-            expiry = new Date(yyyy, mm, 0);
+            expiry = new Date(yyyy, mm, 0); // last day of month
           } else {
             expiry = new Date(yyyy, mm - 1, dd);
           }
@@ -248,13 +251,16 @@
 
       const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = window.ZXing;
 
+      // Expanded formats (medical labels sometimes use these)
       const hints = new Map();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [
         BarcodeFormat.EAN_13,
         BarcodeFormat.EAN_8,
         BarcodeFormat.CODE_128,
         BarcodeFormat.DATA_MATRIX,
-        BarcodeFormat.QR_CODE
+        BarcodeFormat.QR_CODE,
+        BarcodeFormat.PDF_417,
+        BarcodeFormat.AZTEC
       ]);
 
       const reader = new BrowserMultiFormatReader(hints);
@@ -290,7 +296,7 @@
               lastRaw = raw;
               lastScanAtMs = now;
 
-              const fmt = result.getBarcodeFormat().toString(); // "EAN_13", "DATA_MATRIX", etc.
+              const fmt = result.getBarcodeFormat().toString(); // e.g. EAN_13, DATA_MATRIX, PDF_417, AZTEC
 
               let gtin = "";
               let expiryISO = "";
@@ -298,18 +304,23 @@
               let serial = "";
               let status = "UNKNOWN";
 
-              if (fmt === "DATA_MATRIX" || fmt === "QR_CODE" || fmt === "CODE_128") {
+              if (fmt === "EAN_13" || fmt === "EAN_8") {
+                // EAN is normally GTIN only
+                gtin = raw;
+                status = "UNKNOWN_NO_EXPIRY_IN_CODE";
+              } else {
+                // For ANY other format, attempt GS1 parse first
                 const parsed = parseGs1(raw);
                 gtin = parsed.gtin || "";
                 lot = parsed.lot || "";
                 serial = parsed.serial || "";
                 expiryISO = parsed.expiry ? toISODate(parsed.expiry) : "";
                 status = classifyExpiry(parsed.expiry);
-              } else if (fmt === "EAN_13" || fmt === "EAN_8") {
-                gtin = raw;
-                status = "UNKNOWN_NO_EXPIRY_IN_CODE";
-              } else {
-                status = "UNKNOWN_UNSUPPORTED_FORMAT";
+
+                // If nothing was detected as GS1 AI content, show a clearer unknown status
+                if (!gtin && !expiryISO && !lot && !serial) {
+                  status = "UNKNOWN_NOT_GS1_OR_NO_AI17";
+                }
               }
 
               lastType.textContent = fmt;
@@ -339,7 +350,6 @@
 
         } catch (e) {
           alert("Scanner failed to start: " + (e && e.message ? e.message : e));
-          // console.log(e);
           scanning = false;
           startBtn.disabled = false;
           stopBtn.disabled = true;
