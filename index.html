@@ -4,49 +4,32 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Implant Scanner</title>
-
 <style>
-body { font-family: system-ui; margin:16px; }
-.row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
-button:disabled { opacity:.6; }
-input { padding:10px; border-radius:10px; border:1px solid #ddd; width:160px; }
-video { width:min(480px,100%); border-radius:12px; background:black; margin-top:10px; }
+  body { font-family: system-ui; margin:16px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  input[type="number"] { padding:10px; border-radius:10px; border:1px solid #ddd; width:160px; }
+  input[type="range"] { width: 160px; }
+  video { width:min(520px,100%); border-radius:12px; background:black; margin-top:10px; border:1px solid #ddd; }
 
-.badge.big {
-  font-size:26px;
-  padding:12px 20px;
-  border-radius:999px;
-  font-weight:900;
-  display:inline-block;
-}
-.ok  { background:#eaffea; color:#0a5a0a; border:1px solid #bfe9bf; }
-.bad { background:#ffe3e3; color:#7a0b0b; border:1px solid #f0b3b3; }
-.unk { background:#eee; color:#333; border:1px solid #ddd; }
+  .badge.big { font-size:26px; padding:12px 20px; border-radius:999px; font-weight:900; display:inline-block; }
+  .ok  { background:#eaffea; color:#0a5a0a; border:1px solid #bfe9bf; }
+  .bad { background:#ffe3e3; color:#7a0b0b; border:1px solid #f0b3b3; }
+  .unk { background:#eee; color:#333; border:1px solid #ddd; }
 
-table { width:100%; border-collapse:collapse; margin-top:15px; font-size:12px; }
-th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
+  table { width:100%; border-collapse:collapse; margin-top:15px; font-size:12px; }
+  th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 
-#toast {
-  position:fixed;
-  left:50%;
-  bottom:20px;
-  transform:translateX(-50%);
-  background:rgba(0,0,0,0.9);
-  color:white;
-  padding:14px 20px;
-  border-radius:14px;
-  font-weight:800;
-  font-size:16px;
-  display:none;
-  z-index:9999;
-  max-width:92vw;
-  text-align:center;
-}
-.small { font-size:12px; color:#555; margin-top:6px; }
+  #toast {
+    position:fixed; left:50%; bottom:20px; transform:translateX(-50%);
+    background:rgba(0,0,0,0.9); color:#fff; padding:14px 20px; border-radius:14px;
+    font-weight:800; font-size:16px; display:none; z-index:9999; max-width:92vw; text-align:center;
+  }
+  .small { font-size:12px; color:#555; margin-top:6px; }
+  .pill { display:inline-block; font-size:12px; padding:4px 10px; border:1px solid #ddd; border-radius:999px; background:#fafafa; }
 </style>
 </head>
-
 <body>
 
 <h2>Implant Scanner</h2>
@@ -60,8 +43,17 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
   <button id="clearBtn">Leegmaken</button>
 </div>
 
+<div class="row" style="margin-top:8px;">
+  <button id="torchBtn" disabled>🔦 Torch</button>
+  <div>
+    <div class="small">Zoom</div>
+    <input id="zoomSlider" type="range" min="1" max="1" step="0.1" value="1" disabled>
+  </div>
+  <span id="camInfo" class="pill">Camera: –</span>
+</div>
+
 <div class="small">
-  Richt op beide barcodes en houd stil ~1 seconde. De app wacht op GTIN + details voordat hij logt.
+  Tip voor DataMatrix (dot matrix): hou <strong>stil</strong>, zorg voor <strong>veel licht</strong>, en zet de <strong>onderste</strong> barcode iets groter in beeld (net iets dichterbij).
 </div>
 
 <video id="video" muted playsinline></video>
@@ -76,99 +68,95 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 </div>
 
 <table>
-<thead>
-<tr>
-<th>Timestamp</th>
-<th>GTIN</th>
-<th>Expiry</th>
-<th>Status</th>
-<th>Lot</th>
-<th>Serial</th>
-</tr>
-</thead>
-<tbody id="tbody"></tbody>
+  <thead>
+    <tr>
+      <th>Timestamp</th><th>GTIN</th><th>Expiry</th><th>Status</th><th>Lot</th><th>Serial</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
 </table>
 
 <div id="toast">Artikel gescand, scan de volgende.</div>
 
 <script src="https://unpkg.com/@zxing/library@0.21.3"></script>
-
 <script>
 (function(){
-  const {BrowserMultiFormatReader, BarcodeFormat, DecodeHintType} = ZXing;
+  const { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } = ZXing;
 
-  // Extra hints for "long" GS1-128 style labels
+  // Try harder + assume GS1 helps for long GS1-128/Code128 variants
   const hints = new Map();
   hints.set(DecodeHintType.TRY_HARDER, true);
   hints.set(DecodeHintType.ASSUME_GS1, true);
   hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-    BarcodeFormat.EAN_13,
-    BarcodeFormat.EAN_8,
-    BarcodeFormat.UPC_A,
-    BarcodeFormat.UPC_E,
-    BarcodeFormat.CODE_128,
-    BarcodeFormat.CODE_39,
-    BarcodeFormat.ITF,
-    BarcodeFormat.DATA_MATRIX,
-    BarcodeFormat.QR_CODE,
-    BarcodeFormat.PDF_417,
-    BarcodeFormat.AZTEC,
-    BarcodeFormat.CODABAR
+    BarcodeFormat.EAN_13, BarcodeFormat.EAN_8,
+    BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
+    BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.ITF,
+    BarcodeFormat.DATA_MATRIX, BarcodeFormat.QR_CODE,
+    BarcodeFormat.PDF_417, BarcodeFormat.AZTEC, BarcodeFormat.CODABAR
   ]);
 
   const reader = new BrowserMultiFormatReader(hints);
 
-  const video=document.getElementById("video");
-  const startBtn=document.getElementById("startBtn");
-  const stopBtn=document.getElementById("stopBtn");
-  const exportBtn=document.getElementById("exportBtn");
-  const clearBtn=document.getElementById("clearBtn");
-  const monthsInput=document.getElementById("monthsInput");
+  const video = document.getElementById("video");
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const exportBtn = document.getElementById("exportBtn");
+  const clearBtn = document.getElementById("clearBtn");
+  const monthsInput = document.getElementById("monthsInput");
 
-  const lastGtin=document.getElementById("lastGtin");
-  const lastExpiry=document.getElementById("lastExpiry");
-  const lastLot=document.getElementById("lastLot");
-  const lastSerial=document.getElementById("lastSerial");
-  const lastStatus=document.getElementById("lastStatus");
-  const tbody=document.getElementById("tbody");
+  const torchBtn = document.getElementById("torchBtn");
+  const zoomSlider = document.getElementById("zoomSlider");
+  const camInfo = document.getElementById("camInfo");
 
-  let scanning=false;
-  let scanLog=[];
+  const lastGtin = document.getElementById("lastGtin");
+  const lastExpiry = document.getElementById("lastExpiry");
+  const lastLot = document.getElementById("lastLot");
+  const lastSerial = document.getElementById("lastSerial");
+  const lastStatus = document.getElementById("lastStatus");
+  const tbody = document.getElementById("tbody");
 
-  // Capture window: keep searching for the second barcode
+  let scanning = false;
+  let stream = null;
+  let track = null;
+  let torchOn = false;
+
+  let scanLog = [];
+
+  // capture window: wait for GTIN + details
   const CAPTURE_TIMEOUT_MS = 2200;
-  let capture = null; // { gtin, expiry, lot, serial, startedAt }
-  let captureTimeoutTimer = null;
+  let capture = null; // { gtin, expiry, lot, serial }
+  let captureTimer = null;
 
-  let lastRaw=null;
-  let lastRawAt=0;
+  // reduce spam
+  let lastRaw = null;
+  let lastRawAt = 0;
 
   function showToast(msg){
     const t=document.getElementById("toast");
-    t.textContent=msg;
+    t.textContent = msg || "Artikel gescand, scan de volgende.";
     t.style.display="block";
-    if(navigator.vibrate) navigator.vibrate(80);
+    if (navigator.vibrate) navigator.vibrate(80);
     clearTimeout(window.__toastTimer);
-    window.__toastTimer=setTimeout(()=>t.style.display="none",900);
+    window.__toastTimer=setTimeout(()=>t.style.display="none", 900);
   }
 
   function setBadge(status){
-    lastStatus.textContent=status;
-    if(status==="OK") lastStatus.className="badge big ok";
-    else if(status==="–") lastStatus.className="badge big unk";
-    else lastStatus.className="badge big bad";
+    lastStatus.textContent = status;
+    if (status === "OK") lastStatus.className = "badge big ok";
+    else if (status === "–") lastStatus.className = "badge big unk";
+    else lastStatus.className = "badge big bad";
   }
 
   function classify(expIso){
     if(!expIso) return "UNKNOWN";
-    const today=new Date(); today.setHours(0,0,0,0);
-    const expDate=new Date(expIso); expDate.setHours(0,0,0,0);
-    if(expDate < today) return "EXPIRED";
+    const today = new Date(); today.setHours(0,0,0,0);
+    const expDate = new Date(expIso); expDate.setHours(0,0,0,0);
+    if (expDate < today) return "EXPIRED";
 
     const months = Math.max(0, Math.min(36, parseInt(monthsInput.value||"0",10) || 0));
     const limit = new Date(today);
-    limit.setMonth(limit.getMonth()+months);
-    if(expDate <= limit) return "EXPIRING";
+    limit.setMonth(limit.getMonth() + months);
+    if (expDate <= limit) return "EXPIRING";
     return "OK";
   }
 
@@ -181,16 +169,15 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 
   function resetCapture(){
     capture = null;
-    if (captureTimeoutTimer) clearTimeout(captureTimeoutTimer);
-    captureTimeoutTimer = null;
+    if (captureTimer) clearTimeout(captureTimer);
+    captureTimer = null;
   }
 
-  function startCaptureIfNeeded(){
+  function startCapture(){
     if (capture) return;
-    capture = { startedAt: Date.now(), gtin:"", expiry:"", lot:"", serial:"" };
-
-    if (captureTimeoutTimer) clearTimeout(captureTimeoutTimer);
-    captureTimeoutTimer = setTimeout(() => {
+    capture = { gtin:"", expiry:"", lot:"", serial:"" };
+    if (captureTimer) clearTimeout(captureTimer);
+    captureTimer = setTimeout(() => {
       const hasGtin = !!capture?.gtin;
       const hasDetails = !!(capture?.expiry || capture?.lot || capture?.serial);
       if (hasGtin && !hasDetails) showToast("Alleen GTIN gezien. Houd beide barcodes in beeld en probeer opnieuw.");
@@ -201,51 +188,36 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
     }, CAPTURE_TIMEOUT_MS);
   }
 
-  function maybeCommit(){
+  function commitIfComplete(){
     if (!capture) return;
     const hasGtin = !!capture.gtin;
     const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
     if (!(hasGtin && hasDetails)) return;
 
     const status = classify(capture.expiry);
-    updateLastUI();
     setBadge(status);
+    updateLastUI();
 
     const timestamp = new Date().toISOString();
     const row = { timestamp, gtin: capture.gtin, expiry: capture.expiry, status, lot: capture.lot, serial: capture.serial };
     scanLog.push(row);
 
-    const tr=document.createElement("tr");
-    tr.innerHTML=`
-      <td>${timestamp}</td>
-      <td>${row.gtin}</td>
-      <td>${row.expiry}</td>
-      <td>${row.status}</td>
-      <td>${row.lot}</td>
-      <td>${row.serial}</td>`;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${timestamp}</td><td>${row.gtin}</td><td>${row.expiry}</td><td>${row.status}</td><td>${row.lot}</td><td>${row.serial}</td>`;
     tbody.prepend(tr);
 
     exportBtn.disabled = scanLog.length === 0;
     showToast("Artikel gescand, scan de volgende.");
-
     resetCapture();
   }
 
-  // --- Robust GS1 normalization + parsing (for "long barcode variant") ---
+  // Robust GS1 normalization/parsing
   function normalizeGs1Text(raw){
     if (!raw) return "";
     let s = String(raw);
-
-    // Remove common symbology identifiers from scanners
-    // GS1-128: ]C1, GS1 DataMatrix: ]d2, QR: ]Q3, etc.
-    s = s.replace(/^\](C1|c1|d2|D2|Q3|q3|e0|E0)/, "");
-
-    // Remove parentheses and whitespace: (01) -> 01
-    s = s.replace(/[()\s]/g, "");
-
-    // Some scanners may output <GS> or other placeholders; normalize those to ASCII 29
-    s = s.replace(/<GS>/gi, "\u001d");
-
+    s = s.replace(/^\](C1|c1|d2|D2|Q3|q3|e0|E0)/, ""); // symbology ID
+    s = s.replace(/[()\s]/g, ""); // remove parentheses/spaces
+    s = s.replace(/<GS>/gi, "\u001d"); // normalize placeholders
     return s;
   }
 
@@ -253,80 +225,56 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
     const GS = "\u001d";
     const s = normalizeGs1Text(raw);
 
-    const readFixedAt = (idx, len) => s.slice(idx, idx + len);
-
-    // Read variable until GS or until we detect a new AI boundary
     const readVariableFrom = (idx) => {
-      let out = "";
-      let i = idx;
+      let out = "", i = idx;
       while (i < s.length) {
         const ch = s[i];
         if (ch === GS) break;
-
-        // stop if we see a known AI boundary and we already have some data
         const next2 = s.slice(i, i+2);
         if (out.length > 0 && ["01","10","11","15","17","21"].includes(next2)) break;
-
-        out += ch;
-        i++;
+        out += ch; i++;
       }
       return out;
     };
 
-    let gtin = "";
-    let expiryISO = "";
-    let lot = "";
-    let serial = "";
-
-    // Walk through the string reading AIs sequentially.
-    // Supports: 01(14), 17(6), 15(6), 11(6), 10(var), 21(var)
-    let i = 0;
-    while (i < s.length) {
-      // skip group separators
+    let gtin="", expiryISO="", lot="", serial="";
+    let i=0;
+    while(i < s.length){
       if (s[i] === GS) { i++; continue; }
-
       const ai2 = s.slice(i, i+2);
 
       if (ai2 === "01") {
-        const v = readFixedAt(i+2, 14);
+        const v = s.slice(i+2, i+16);
         if (/^\d{14}$/.test(v)) gtin = v;
-        i += 2 + 14;
-        continue;
+        i += 16; continue;
       }
 
       if (ai2 === "17" || ai2 === "15" || ai2 === "11") {
-        const v = readFixedAt(i+2, 6);
+        const v = s.slice(i+2, i+8);
         if (/^\d{6}$/.test(v)) {
-          const yy = parseInt(v.slice(0,2),10);
-          const mm = parseInt(v.slice(2,4),10);
-          const dd = parseInt(v.slice(4,6),10);
-          const yyyy = 2000 + yy;
-          const dt = new Date(yyyy, mm-1, dd);
+          const yy=+v.slice(0,2), mm=+v.slice(2,4), dd=+v.slice(4,6);
+          const dt = new Date(2000+yy, mm-1, dd);
           if (!Number.isNaN(dt.getTime())) {
-            const M = String(dt.getMonth()+1).padStart(2,"0");
-            const D = String(dt.getDate()).padStart(2,"0");
+            const M=String(dt.getMonth()+1).padStart(2,"0");
+            const D=String(dt.getDate()).padStart(2,"0");
             expiryISO = `${dt.getFullYear()}-${M}-${D}`;
           }
         }
-        i += 2 + 6;
-        continue;
+        i += 8; continue;
       }
 
       if (ai2 === "10") {
         const v = readVariableFrom(i+2);
         if (v) lot = v;
-        i += 2 + v.length;
-        continue;
+        i += 2 + v.length; continue;
       }
 
       if (ai2 === "21") {
         const v = readVariableFrom(i+2);
         if (v) serial = v;
-        i += 2 + v.length;
-        continue;
+        i += 2 + v.length; continue;
       }
 
-      // If no AI recognized, advance 1 char (keeps parser resilient)
       i += 1;
     }
 
@@ -336,21 +284,20 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
   function handleDecoded(raw, format){
     const now = Date.now();
     if (raw === lastRaw && (now - lastRawAt) < 180) return;
-    lastRaw = raw;
-    lastRawAt = now;
+    lastRaw = raw; lastRawAt = now;
 
-    startCaptureIfNeeded();
+    startCapture();
 
-    // Treat GTIN-only formats as GTIN (EAN/UPC)
+    // GTIN-only formats (EAN/UPC)
     if (format === "EAN_13" || format === "EAN_8" || format === "UPC_A" || format === "UPC_E") {
       capture.gtin = String(raw);
       updateLastUI();
       setBadge("PENDING_DETAILS");
-      showToast("GTIN gezien. Houd stil: details zoeken…");
+      // (niet elke keer toasten als je hem stil houdt)
       return;
     }
 
-    // Try GS1 parse for everything else (incl. long Code128 variants)
+    // Everything else: try GS1 parse (long Code128 / DataMatrix)
     const parsed = parseGs1(raw);
 
     if (parsed.gtin) capture.gtin = parsed.gtin;
@@ -359,18 +306,7 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
     if (parsed.serial) capture.serial = parsed.serial;
 
     updateLastUI();
-
-    const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
-    const hasGtin = !!capture.gtin;
-
-    if (hasDetails && !hasGtin) {
-      setBadge("PENDING_GTIN");
-      showToast("Details gezien. Houd stil: GTIN zoeken…");
-    } else {
-      setBadge("PENDING_MERGE");
-    }
-
-    maybeCommit();
+    commitIfComplete();
   }
 
   function downloadCSV(){
@@ -385,43 +321,140 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
     const blob=new Blob([csv],{type:"text/csv"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
-    a.href=url;
-    a.download="scanlog.csv";
-    a.click();
+    a.href=url; a.download="scanlog.csv"; a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function applyTorch(on){
+    if (!track) return;
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps.torch) return;
+    await track.applyConstraints({ advanced: [{ torch: !!on }] });
+  }
+
+  async function applyZoom(z){
+    if (!track) return;
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps.zoom) return;
+    const val = Math.max(caps.zoom.min, Math.min(caps.zoom.max, z));
+    await track.applyConstraints({ advanced: [{ zoom: val }] });
+  }
+
+  async function startStreamWithFallback(){
+    const tries = [
+      { width: 3840, height: 2160, label: "4K" },
+      { width: 1920, height: 1080, label: "1080p" },
+      { width: 1280, height: 720,  label: "720p" }
+    ];
+
+    for (const t of tries) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: t.width },
+            height: { ideal: t.height }
+          },
+          audio: false
+        });
+        camInfo.textContent = `Camera: ${t.label}`;
+        return s;
+      } catch (e) {
+        // try next fallback
+      }
+    }
+    // last resort:
+    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio:false });
+    camInfo.textContent = "Camera: auto";
+    return s;
   }
 
   startBtn.onclick = async () => {
     if (scanning) return;
 
-    scanning=true;
-    startBtn.disabled=true;
-    stopBtn.disabled=false;
+    try {
+      scanning = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
 
-    const constraints = {
-      video: {
-        facingMode: { ideal: "environment" },
-        width:  { ideal: 1920 },
-        height: { ideal: 1080 }
+      // create our own stream (higher chance of DataMatrix success)
+      stream = await startStreamWithFallback();
+      video.srcObject = stream;
+      await video.play();
+
+      track = stream.getVideoTracks()[0];
+
+      // setup torch/zoom UI if supported
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      torchBtn.disabled = !caps.torch;
+      zoomSlider.disabled = !caps.zoom;
+
+      if (caps.zoom) {
+        zoomSlider.min = caps.zoom.min;
+        zoomSlider.max = caps.zoom.max;
+        zoomSlider.step = caps.zoom.step || 0.1;
+        const settings = track.getSettings ? track.getSettings() : {};
+        zoomSlider.value = settings.zoom || caps.zoom.min || 1;
+      } else {
+        zoomSlider.value = 1;
       }
-    };
 
-    reader.decodeFromConstraints(constraints, video, (result, err) => {
-      if (!scanning) return;
-      if (result) handleDecoded(result.getText(), result.getBarcodeFormat().toString());
-    });
+      // Start ZXing on the video element continuously
+      reader.decodeFromVideoElementContinuously(video, (result, err) => {
+        if (!scanning) return;
+        if (result) handleDecoded(result.getText(), result.getBarcodeFormat().toString());
+      });
 
-    showToast("Scanner gestart. Richt op beide barcodes.");
+      showToast("Scanner gestart. Richt op beide barcodes en houd even stil.");
+      setBadge("–");
+      resetCapture();
+    } catch (e) {
+      scanning = false;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      showToast("Start mislukt. Check camera permissies / Safari.");
+      console.log(e);
+    }
   };
 
-  stopBtn.onclick = () => {
-    scanning=false;
-    reader.reset();
-    startBtn.disabled=false;
-    stopBtn.disabled=true;
+  stopBtn.onclick = async () => {
+    scanning = false;
+    try { reader.reset(); } catch(e) {}
+
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
+    stream = null;
+    track = null;
+    torchOn = false;
+
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    torchBtn.disabled = true;
+    zoomSlider.disabled = true;
+    camInfo.textContent = "Camera: –";
+
     resetCapture();
     setBadge("–");
     showToast("Scanner gestopt.");
+  };
+
+  torchBtn.onclick = async () => {
+    if (!track) return;
+    torchOn = !torchOn;
+    try {
+      await applyTorch(torchOn);
+      showToast(torchOn ? "Torch aan" : "Torch uit");
+    } catch (e) {
+      showToast("Torch niet beschikbaar");
+      torchOn = false;
+    }
+  };
+
+  zoomSlider.oninput = async () => {
+    if (!track) return;
+    const z = parseFloat(zoomSlider.value);
+    try { await applyZoom(z); } catch(e) {}
   };
 
   clearBtn.onclick = () => {
@@ -429,13 +462,8 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
     tbody.innerHTML = "";
     exportBtn.disabled = true;
     resetCapture();
-
-    lastGtin.textContent="–";
-    lastExpiry.textContent="–";
-    lastLot.textContent="–";
-    lastSerial.textContent="–";
+    lastGtin.textContent="–"; lastExpiry.textContent="–"; lastLot.textContent="–"; lastSerial.textContent="–";
     setBadge("–");
-
     showToast("Log geleegd");
   };
 
