@@ -1,9 +1,9 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Implant Barcode Scanner</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Implant Scanner</title>
 
 <style>
 body { font-family: system-ui; margin:16px; }
@@ -92,16 +92,17 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 
 const {BrowserMultiFormatReader,BarcodeFormat,DecodeHintType} = ZXing;
 
-const reader = new BrowserMultiFormatReader(new Map([
-  [DecodeHintType.POSSIBLE_FORMATS,[
-    BarcodeFormat.EAN_13,
-    BarcodeFormat.EAN_8,
-    BarcodeFormat.CODE_128,
-    BarcodeFormat.DATA_MATRIX,
-    BarcodeFormat.PDF_417,
-    BarcodeFormat.AZTEC
-  ]]
-]));
+const hints = new Map();
+hints.set(DecodeHintType.POSSIBLE_FORMATS,[
+  BarcodeFormat.EAN_13,
+  BarcodeFormat.EAN_8,
+  BarcodeFormat.CODE_128,
+  BarcodeFormat.DATA_MATRIX,
+  BarcodeFormat.PDF_417,
+  BarcodeFormat.AZTEC
+]);
+
+const reader = new BrowserMultiFormatReader(hints);
 
 const video=document.getElementById("video");
 const startBtn=document.getElementById("startBtn");
@@ -121,13 +122,15 @@ let scanning=false;
 let frameBuffer=[];
 let bufferTimer=null;
 let scanLog=[];
+let lastRaw=null;
+let lastScanTime=0;
 
 function showToast(msg){
   const t=document.getElementById("toast");
   t.textContent=msg;
   t.style.display="block";
-  if(navigator.vibrate) navigator.vibrate(100);
-  setTimeout(()=>{t.style.display="none"},1000);
+  if(navigator.vibrate) navigator.vibrate(80);
+  setTimeout(()=>t.style.display="none",900);
 }
 
 function classify(exp){
@@ -169,6 +172,7 @@ function parseGs1(raw){
 }
 
 function processBuffer(){
+
   let merged={gtin:"",expiry:"",lot:"",serial:""};
 
   frameBuffer.forEach(item=>{
@@ -183,76 +187,67 @@ function processBuffer(){
     }
   });
 
-  if(merged.gtin){
-    const status=classify(merged.expiry);
-    setBadge(status);
-
-    lastGtin.textContent=merged.gtin||"–";
-    lastExpiry.textContent=merged.expiry||"–";
-    lastLot.textContent=merged.lot||"–";
-    lastSerial.textContent=merged.serial||"–";
-
-    scanLog.push({
-      timestamp:new Date().toISOString(),
-      ...merged,
-      status
-    });
-
-    const tr=document.createElement("tr");
-    tr.innerHTML=`
-      <td>${new Date().toISOString()}</td>
-      <td>${merged.gtin}</td>
-      <td>${merged.expiry}</td>
-      <td>${status}</td>
-      <td>${merged.lot}</td>
-      <td>${merged.serial}</td>`;
-    tbody.prepend(tr);
-
-    exportBtn.disabled=false;
-    showToast("Artikel gescand, scan de volgende.");
-  }
-
   frameBuffer=[];
+
+  if(!merged.gtin) return;
+
+  const status=classify(merged.expiry);
+  setBadge(status);
+
+  lastGtin.textContent=merged.gtin||"–";
+  lastExpiry.textContent=merged.expiry||"–";
+  lastLot.textContent=merged.lot||"–";
+  lastSerial.textContent=merged.serial||"–";
+
+  const timestamp=new Date().toISOString();
+
+  scanLog.push({timestamp,...merged,status});
+
+  const tr=document.createElement("tr");
+  tr.innerHTML=`
+    <td>${timestamp}</td>
+    <td>${merged.gtin}</td>
+    <td>${merged.expiry}</td>
+    <td>${status}</td>
+    <td>${merged.lot}</td>
+    <td>${merged.serial}</td>`;
+  tbody.prepend(tr);
+
+  exportBtn.disabled=false;
+  showToast("Artikel gescand, scan de volgende.");
 }
 
-startBtn.onclick = async () => {
+startBtn.onclick=async()=>{
+  if(scanning) return;
+  scanning=true;
+  startBtn.disabled=true;
+  stopBtn.disabled=false;
 
-  if (scanning) return;
-
-  scanning = true;
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
-
-  const devices = await reader.listVideoInputDevices();
-
-  const backCam = devices.find(d =>
-    /back|rear|environment/i.test(d.label)
-  );
-
-  const deviceId = backCam ? backCam.deviceId : devices[0].deviceId;
-
-  reader.decodeFromVideoDevice(
-    deviceId,
-    video,
-    {
-      video: {
-        facingMode: "environment",
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      }
-    },
-    (result) => {
-      if (result) {
-        frameBuffer.push({
-          raw: result.getText(),
-          format: result.getBarcodeFormat().toString()
-        });
-
-        clearTimeout(bufferTimer);
-        bufferTimer = setTimeout(processBuffer, 300); // sneller
-      }
+  const constraints={
+    video:{
+      facingMode:{ideal:"environment"},
+      width:{ideal:1920},
+      height:{ideal:1080}
     }
-  );
+  };
+
+  reader.decodeFromConstraints(constraints,video,(result)=>{
+    if(result){
+      const raw=result.getText();
+      const now=Date.now();
+      if(raw===lastRaw && (now-lastScanTime)<200) return;
+      lastRaw=raw;
+      lastScanTime=now;
+
+      frameBuffer.push({
+        raw,
+        format:result.getBarcodeFormat().toString()
+      });
+
+      clearTimeout(bufferTimer);
+      bufferTimer=setTimeout(processBuffer,300);
+    }
+  });
 };
 
 stopBtn.onclick=()=>{
