@@ -94,61 +94,66 @@
     const reader = new BrowserMultiFormatReader(hints);
     let scanning = false;
 
-    async function start(){
-      if (scanning) return;
-      scanning = true;
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-      errorsEl.textContent = "–";
-      lastFmt.textContent = "–";
-      lastText.textContent = "–";
+async function start(){
+  if (scanning) return;
+  scanning = true;
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  errorsEl.textContent = "–";
+  lastFmt.textContent = "–";
+  lastText.textContent = "–";
 
-      try {
-        // Constraints that work well on iPhone Safari
-        const constraints = {
-          video: {
-            facingMode: { ideal: "environment" },
-            width:  { ideal: 1920 },
-            height: { ideal: 1080 }
-          },
-          audio: false
-        };
+  try {
+    // 1) Start stream ourselves (works very reliably on iPhone)
+    const constraints = {
+      video: {
+        facingMode: { ideal: "environment" },
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    };
 
-        // Quick camera test (to show if permission works)
-        const testStream = await navigator.mediaDevices.getUserMedia(constraints);
-        camStatus.textContent = "OK";
-        camStatus.className = "ok";
-        // Stop test stream immediately; ZXing will request again
-        testStream.getTracks().forEach(t => t.stop());
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    camStatus.textContent = "OK";
+    camStatus.className = "ok";
 
-        // Start decoding
-        reader.decodeFromConstraints(constraints, video, (result, err) => {
-          if (!scanning) return;
+    video.srcObject = stream;
+    await video.play();
 
-          if (result) {
-            lastFmt.textContent = result.getBarcodeFormat().toString();
-            lastText.textContent = result.getText();
-          } else if (err && err.name && err.name !== "NotFoundException") {
-            logErr(err.name + ": " + (err.message || String(err)));
-          }
-        });
+    // 2) Now let ZXing decode from the playing video element continuously
+    reader.decodeFromVideoElementContinuously(video, (result, err) => {
+      if (!scanning) return;
 
-      } catch(e) {
-        camStatus.textContent = "FAILED";
-        camStatus.className = "bad";
-        logErr("Camera/getUserMedia failed: " + (e && e.message ? e.message : String(e)));
-        scanning = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
+      if (result) {
+        lastFmt.textContent = result.getBarcodeFormat().toString();
+        lastText.textContent = result.getText();
+      } else if (err && err.name && err.name !== "NotFoundException") {
+        logErr(err.name + ": " + (err.message || String(err)));
       }
-    }
+    });
 
-    function stop(){
-      scanning = false;
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      try { reader.reset(); } catch(e) {}
-    }
+  } catch(e) {
+    camStatus.textContent = "FAILED";
+    camStatus.className = "bad";
+    logErr("Start failed: " + (e && e.message ? e.message : String(e)));
+    scanning = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+}
+
+   function stop(){
+  scanning = false;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  try { reader.reset(); } catch(e) {}
+
+  // Stop camera stream
+  const s = video.srcObject;
+  if (s) s.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+}
 
     startBtn.addEventListener("click", start);
     stopBtn.addEventListener("click", stop);
