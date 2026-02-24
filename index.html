@@ -3,22 +3,22 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Implant Scanner</title>
+<title>Implant Barcode Scanner</title>
 
 <style>
 body { font-family: system-ui; margin:16px; }
 .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
 button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
-input { padding:10px; border-radius:10px; border:1px solid #ddd; width:90px; }
+button:disabled { opacity:.6; }
+input { padding:10px; border-radius:10px; border:1px solid #ddd; width:160px; }
 video { width:min(480px,100%); border-radius:12px; background:black; margin-top:10px; }
 
 .badge.big {
   font-size:26px;
   padding:12px 20px;
   border-radius:999px;
-  font-weight:800;
+  font-weight:900;
   display:inline-block;
-  margin-top:8px;
 }
 
 .ok  { background:#eaffea; color:#0a5a0a; border:1px solid #bfe9bf; }
@@ -28,7 +28,6 @@ video { width:min(480px,100%); border-radius:12px; background:black; margin-top:
 table { width:100%; border-collapse:collapse; margin-top:15px; font-size:12px; }
 th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 
-/* Toast */
 #toast {
   position:fixed;
   left:50%;
@@ -53,17 +52,19 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 <div class="row">
   <label>Expiring threshold (months)</label>
   <input id="monthsInput" type="number" value="3" min="0" max="36">
-  <button id="startBtn">Start scanner</button>
+  <button id="startBtn">Start</button>
   <button id="stopBtn" disabled>Stop</button>
   <button id="exportBtn" disabled>Export CSV</button>
+  <button id="clearBtn">Leegmaken</button>
 </div>
 
 <video id="video" muted playsinline></video>
 
-<div>
-  <p>Type: <span id="lastType">–</span></p>
-  <p>GTIN: <span id="lastGtin">–</span></p>
-  <p>Expiry: <span id="lastExpiry">–</span></p>
+<div style="margin-top:15px;">
+  <div>GTIN: <span id="lastGtin">–</span></div>
+  <div>Expiry: <span id="lastExpiry">–</span></div>
+  <div>Lot: <span id="lastLot">–</span></div>
+  <div>Serial: <span id="lastSerial">–</span></div>
   <div>Status:</div>
   <span id="lastStatus" class="badge big unk">–</span>
 </div>
@@ -72,7 +73,6 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 <thead>
 <tr>
 <th>Timestamp</th>
-<th>Type</th>
 <th>GTIN</th>
 <th>Expiry</th>
 <th>Status</th>
@@ -98,33 +98,36 @@ const reader = new BrowserMultiFormatReader(new Map([
     BarcodeFormat.EAN_8,
     BarcodeFormat.CODE_128,
     BarcodeFormat.DATA_MATRIX,
-    BarcodeFormat.QR_CODE,
     BarcodeFormat.PDF_417,
     BarcodeFormat.AZTEC
   ]]
 ]));
 
+const video=document.getElementById("video");
 const startBtn=document.getElementById("startBtn");
 const stopBtn=document.getElementById("stopBtn");
 const exportBtn=document.getElementById("exportBtn");
+const clearBtn=document.getElementById("clearBtn");
 const monthsInput=document.getElementById("monthsInput");
-const video=document.getElementById("video");
-const tbody=document.getElementById("tbody");
 
-const lastType=document.getElementById("lastType");
 const lastGtin=document.getElementById("lastGtin");
 const lastExpiry=document.getElementById("lastExpiry");
+const lastLot=document.getElementById("lastLot");
+const lastSerial=document.getElementById("lastSerial");
 const lastStatus=document.getElementById("lastStatus");
+const tbody=document.getElementById("tbody");
 
-const scanLog=[];
 let scanning=false;
+let frameBuffer=[];
+let bufferTimer=null;
+let scanLog=[];
 
-function showToast(){
+function showToast(msg){
   const t=document.getElementById("toast");
+  t.textContent=msg;
   t.style.display="block";
   if(navigator.vibrate) navigator.vibrate(100);
-  clearTimeout(window.toastTimer);
-  window.toastTimer=setTimeout(()=>{t.style.display="none"},1000);
+  setTimeout(()=>{t.style.display="none"},1000);
 }
 
 function classify(exp){
@@ -141,11 +144,6 @@ function classify(exp){
 function setBadge(status){
   lastStatus.textContent=status;
   lastStatus.className="badge big "+(status==="OK"?"ok":"bad");
-}
-
-function toISO(d){
-  if(!d) return "";
-  return d.toISOString().slice(0,10);
 }
 
 function parseGs1(raw){
@@ -170,6 +168,53 @@ function parseGs1(raw){
   };
 }
 
+function processBuffer(){
+  let merged={gtin:"",expiry:"",lot:"",serial:""};
+
+  frameBuffer.forEach(item=>{
+    if(item.format==="EAN_13"||item.format==="EAN_8"){
+      merged.gtin=item.raw;
+    } else {
+      const p=parseGs1(item.raw);
+      if(p.gtin) merged.gtin=p.gtin;
+      if(p.expiry) merged.expiry=p.expiry.toISOString().slice(0,10);
+      if(p.lot) merged.lot=p.lot;
+      if(p.serial) merged.serial=p.serial;
+    }
+  });
+
+  if(merged.gtin){
+    const status=classify(merged.expiry);
+    setBadge(status);
+
+    lastGtin.textContent=merged.gtin||"–";
+    lastExpiry.textContent=merged.expiry||"–";
+    lastLot.textContent=merged.lot||"–";
+    lastSerial.textContent=merged.serial||"–";
+
+    scanLog.push({
+      timestamp:new Date().toISOString(),
+      ...merged,
+      status
+    });
+
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td>${new Date().toISOString()}</td>
+      <td>${merged.gtin}</td>
+      <td>${merged.expiry}</td>
+      <td>${status}</td>
+      <td>${merged.lot}</td>
+      <td>${merged.serial}</td>`;
+    tbody.prepend(tr);
+
+    exportBtn.disabled=false;
+    showToast("Artikel gescand, scan de volgende.");
+  }
+
+  frameBuffer=[];
+}
+
 startBtn.onclick=async()=>{
   if(scanning) return;
   scanning=true;
@@ -179,54 +224,14 @@ startBtn.onclick=async()=>{
   const devices=await reader.listVideoInputDevices();
   const deviceId=devices[0].deviceId;
 
-  reader.decodeFromVideoDevice(deviceId,video,(result,err)=>{
+  reader.decodeFromVideoDevice(deviceId,video,(result)=>{
     if(result){
-      const raw=result.getText();
-      const fmt=result.getBarcodeFormat().toString();
-      let gtin="",expiry="",lot="",serial="",status="";
-
-      if(fmt==="EAN_13"||fmt==="EAN_8"){
-        gtin=raw;
-        status="UNKNOWN";
-      } else {
-        const parsed=parseGs1(raw);
-        gtin=parsed.gtin;
-        expiry=toISO(parsed.expiry);
-        lot=parsed.lot;
-        serial=parsed.serial;
-        status=classify(parsed.expiry);
-      }
-
-      lastType.textContent=fmt;
-      lastGtin.textContent=gtin||"–";
-      lastExpiry.textContent=expiry||"–";
-      setBadge(status);
-
-      const item={
-        timestamp:new Date().toISOString(),
-        type:fmt,
-        gtin,
-        expiry,
-        status,
-        lot,
-        serial
-      };
-
-      scanLog.push(item);
-
-      const tr=document.createElement("tr");
-      tr.innerHTML=`
-        <td>${item.timestamp}</td>
-        <td>${item.type}</td>
-        <td>${item.gtin}</td>
-        <td>${item.expiry}</td>
-        <td>${item.status}</td>
-        <td>${item.lot}</td>
-        <td>${item.serial}</td>`;
-      tbody.prepend(tr);
-
-      exportBtn.disabled=false;
-      showToast();
+      frameBuffer.push({
+        raw:result.getText(),
+        format:result.getBarcodeFormat().toString()
+      });
+      clearTimeout(bufferTimer);
+      bufferTimer=setTimeout(processBuffer,600);
     }
   });
 };
@@ -238,8 +243,19 @@ stopBtn.onclick=()=>{
   stopBtn.disabled=true;
 };
 
+clearBtn.onclick=()=>{
+  scanLog=[];
+  tbody.innerHTML="";
+  lastGtin.textContent="–";
+  lastExpiry.textContent="–";
+  lastLot.textContent="–";
+  lastSerial.textContent="–";
+  setBadge("–");
+  showToast("Log geleegd");
+};
+
 exportBtn.onclick=()=>{
-  const header=["Timestamp","Type","GTIN","Expiry","Status","Lot","Serial"];
+  const header=["Timestamp","GTIN","Expiry","Status","Lot","Serial"];
   const rows=scanLog.map(x=>header.map(h=>x[h.toLowerCase()]||x[h]||"").join(","));
   const csv=[header.join(","),...rows].join("\n");
   const blob=new Blob([csv],{type:"text/csv"});
