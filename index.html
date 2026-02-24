@@ -9,27 +9,41 @@
     .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
     button { padding: 10px 12px; cursor: pointer; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
     button:disabled { opacity: .6; cursor: not-allowed; }
+    input[type="number"] { padding: 10px 12px; border-radius: 10px; border: 1px solid #ddd; width: 110px; }
+    label { font-size: 12px; color: #444; }
     video { width: min(480px, 100%); border: 1px solid #ddd; border-radius: 12px; background: #000; }
     .card { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
-    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; }
-    .ok { background: #eaffea; }
-    .warn { background: #fff6d6; }
-    .bad { background: #ffe3e3; }
-    .unk { background: #eee; }
+
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 800; font-size: 12px; }
+    .badge.big { font-size: 24px; padding: 10px 18px; border-radius: 999px; letter-spacing: .5px; }
+
+    /* Color logic: green only for OK, red for any NOT OK */
+    .ok  { background: #eaffea; color: #0a5a0a; border: 1px solid #bfe9bf; }
+    .bad { background: #ffe3e3; color: #7a0b0b; border: 1px solid #f0b3b3; }
+    .unk { background: #eee; color: #333; border: 1px solid #ddd; }
+
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; font-size: 12px; vertical-align: top; }
-    code { background: #f7f7f7; padding: 2px 6px; border-radius: 6px; display: inline-block; max-width: 520px; overflow-wrap: anywhere; }
     .small { font-size: 12px; color: #555; }
   </style>
 </head>
 <body>
   <h2>Implant Barcode Scanner (GS1 DataMatrix + EAN)</h2>
 
-  <div class="row">
+  <div class="row" style="margin-bottom:6px;">
+    <div>
+      <label for="monthsInput"><strong>Expiring threshold (months)</strong></label><br />
+      <input id="monthsInput" type="number" min="0" max="36" step="1" value="3" />
+    </div>
+
     <button id="startBtn">Start scanner</button>
     <button id="stopBtn" disabled>Stop</button>
     <button id="exportBtn" disabled>Export CSV</button>
     <button id="clearBtn" disabled>Clear log</button>
+  </div>
+
+  <div class="small">
+    Tip: scan the GS1 UDI (often DataMatrix) to read expiry (AI 17). EAN usually has no expiry.
   </div>
 
   <div class="card">
@@ -37,13 +51,18 @@
       <video id="video" muted playsinline></video>
       <div>
         <div><strong>Last scan</strong></div>
-        <div class="small">Tip: scan the GS1 UDI (often DataMatrix) to read expiry (AI 17).</div>
+
         <div style="margin-top:8px;">
           <div>Type: <span id="lastType">–</span></div>
           <div>GTIN: <span id="lastGtin">–</span></div>
           <div>Expiry: <span id="lastExpiry">–</span></div>
-          <div>Status: <span id="lastStatus" class="badge unk">–</span></div>
-          <div class="small" style="margin-top:8px;">If Start does nothing: open in Safari (not inside GitHub app) and allow camera access.</div>
+          <div style="margin-top:10px;">
+            Status:
+            <span id="lastStatus" class="badge big unk">–</span>
+          </div>
+          <div class="small" style="margin-top:10px;">
+            If Start does nothing: open in Safari (not inside GitHub app) and allow camera access.
+          </div>
         </div>
       </div>
     </div>
@@ -61,7 +80,6 @@
           <th>Status</th>
           <th>Lot</th>
           <th>Serial</th>
-          <th>Raw</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -77,6 +95,7 @@
       const stopBtn   = document.getElementById("stopBtn");
       const exportBtn = document.getElementById("exportBtn");
       const clearBtn  = document.getElementById("clearBtn");
+      const monthsInput = document.getElementById("monthsInput");
       const videoEl   = document.getElementById("video");
 
       const lastType   = document.getElementById("lastType");
@@ -93,13 +112,19 @@
       let lastRaw = null;
       let lastScanAtMs = 0;
 
+      function getThresholdMonths() {
+        const n = parseInt(monthsInput.value, 10);
+        if (Number.isNaN(n) || n < 0) return 0;
+        if (n > 36) return 36;
+        return n;
+      }
+
       function setStatusBadge(text) {
         lastStatus.textContent = text;
-        lastStatus.className = "badge " + (
-          text === "OK" ? "ok" :
-          (text && text.indexOf("EXPIRING") === 0) ? "warn" :
-          text === "EXPIRED" ? "bad" : "unk"
-        );
+
+        // green only when OK, red for everything else (including expiring soon / expired / unknown)
+        const cls = (text === "OK") ? "ok" : (text === "–" ? "unk" : "bad");
+        lastStatus.className = "badge big " + cls;
       }
 
       function toISODate(d) {
@@ -120,14 +145,19 @@
 
       function classifyExpiry(expiryDate) {
         if (!expiryDate) return "UNKNOWN_NO_EXPIRY_IN_CODE";
+
         const today = new Date();
         today.setHours(0,0,0,0);
+
         const exp = new Date(expiryDate);
         exp.setHours(0,0,0,0);
 
         if (exp < today) return "EXPIRED";
-        const in3m = addMonths(today, 3);
-        if (exp <= in3m) return "EXPIRING_≤3_MONTHS";
+
+        const months = getThresholdMonths();
+        const limit = addMonths(today, months);
+
+        if (exp <= limit) return `EXPIRING_≤${months}_MONTHS`;
         return "OK";
       }
 
@@ -147,13 +177,12 @@
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${item.timestamp}</td>
-          <td>${item.type}</td>
+          <td>${escapeHtml(item.type)}</td>
           <td>${escapeHtml(item.gtin || "")}</td>
           <td>${escapeHtml(item.expiry || "")}</td>
           <td>${escapeHtml(item.status)}</td>
           <td>${escapeHtml(item.lot || "")}</td>
           <td>${escapeHtml(item.serial || "")}</td>
-          <td><code>${escapeHtml(item.raw || "")}</code></td>
         `;
         tbody.prepend(tr);
         countEl.textContent = String(scanLog.length);
@@ -162,9 +191,9 @@
       }
 
       function downloadCSV() {
-        const header = ["Timestamp","Type","GTIN","ExpiryDate","Status","Lot","Serial","Raw"];
+        const header = ["Timestamp","Type","GTIN","ExpiryDate","Status","Lot","Serial"];
         const rows = scanLog.map(x => [
-          x.timestamp, x.type, x.gtin, x.expiry, x.status, x.lot, x.serial, x.raw
+          x.timestamp, x.type, x.gtin, x.expiry, x.status, x.lot, x.serial
         ].map(csvEscape).join(","));
 
         const csv = [header.join(","), ...rows].join("\n");
@@ -180,17 +209,6 @@
         URL.revokeObjectURL(url);
       }
 
-      /**
-       * Minimal GS1 AI parser for common UDI content:
-       * 01 GTIN (14 fixed)
-       * 17 Expiry YYMMDD (6 fixed)
-       * 10 LOT (variable, ends at GS)
-       * 21 SERIAL (variable, ends at GS)
-       *
-       * Notes:
-       * - Many scanners output GS (FNC1 group separator) as ASCII 29 (\u001d).
-       * - Some scanners replace GS with other separators; raw is stored so you can adjust later.
-       */
       function parseGs1(raw) {
         const GS = "\u001d";
         const s = raw || "";
@@ -209,11 +227,8 @@
           while (i < s.length) {
             const ch = s[i];
             if (ch === GS) break;
-
-            // Simple heuristic: stop if we hit a known AI boundary and already collected something
             const next2 = s.slice(i, i+2);
             if (out.length > 0 && ["01","10","17","21","11","15","30","37"].includes(next2)) break;
-
             out += ch;
             i++;
           }
@@ -229,21 +244,18 @@
         if (exp6 && exp6.length === 6) {
           const yy = parseInt(exp6.slice(0,2), 10);
           const mm = parseInt(exp6.slice(2,4), 10);
-          let dd = parseInt(exp6.slice(4,6), 10);
+          const ddRaw = parseInt(exp6.slice(4,6), 10);
           const yyyy = 2000 + yy;
 
-          if (dd === 0) {
-            expiry = new Date(yyyy, mm, 0); // last day of month
-          } else {
-            expiry = new Date(yyyy, mm - 1, dd);
-          }
+          if (ddRaw === 0) expiry = new Date(yyyy, mm, 0);
+          else expiry = new Date(yyyy, mm - 1, ddRaw);
+
           if (Number.isNaN(expiry.getTime())) expiry = null;
         }
 
         return { gtin: gtin14, expiry, lot, serial };
       }
 
-      // ZXing init
       if (!window.ZXing) {
         alert("ZXing library failed to load. Try disabling content blockers or switching to 4G/5G.");
         return;
@@ -251,7 +263,6 @@
 
       const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = window.ZXing;
 
-      // Expanded formats (medical labels sometimes use these)
       const hints = new Map();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [
         BarcodeFormat.EAN_13,
@@ -269,7 +280,6 @@
         if (scanning) return;
 
         try {
-          // Trigger permission prompt early on iOS
           await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
 
           const devices = await reader.listVideoInputDevices();
@@ -278,13 +288,13 @@
             return;
           }
 
-          // Prefer back camera if labels are available
           const back = devices.find(d => /back|rear|environment/i.test(d.label));
           const deviceId = (back && back.deviceId) ? back.deviceId : devices[0].deviceId;
 
           scanning = true;
           startBtn.disabled = true;
           stopBtn.disabled = false;
+          monthsInput.disabled = true; // lock threshold while scanning
 
           reader.decodeFromVideoDevice(deviceId, videoEl, (result, err) => {
             if (!scanning) return;
@@ -292,11 +302,11 @@
             if (result) {
               const raw = result.getText();
               const now = Date.now();
-              if (raw === lastRaw && (now - lastScanAtMs) < 1200) return; // debounce
+              if (raw === lastRaw && (now - lastScanAtMs) < 1200) return;
               lastRaw = raw;
               lastScanAtMs = now;
 
-              const fmt = result.getBarcodeFormat().toString(); // e.g. EAN_13, DATA_MATRIX, PDF_417, AZTEC
+              const fmt = result.getBarcodeFormat().toString();
 
               let gtin = "";
               let expiryISO = "";
@@ -305,11 +315,9 @@
               let status = "UNKNOWN";
 
               if (fmt === "EAN_13" || fmt === "EAN_8") {
-                // EAN is normally GTIN only
                 gtin = raw;
                 status = "UNKNOWN_NO_EXPIRY_IN_CODE";
               } else {
-                // For ANY other format, attempt GS1 parse first
                 const parsed = parseGs1(raw);
                 gtin = parsed.gtin || "";
                 lot = parsed.lot || "";
@@ -317,7 +325,6 @@
                 expiryISO = parsed.expiry ? toISODate(parsed.expiry) : "";
                 status = classifyExpiry(parsed.expiry);
 
-                // If nothing was detected as GS1 AI content, show a clearer unknown status
                 if (!gtin && !expiryISO && !lot && !serial) {
                   status = "UNKNOWN_NOT_GS1_OR_NO_AI17";
                 }
@@ -335,16 +342,10 @@
                 expiry: expiryISO,
                 status,
                 lot,
-                serial,
-                raw
+                serial
               };
               scanLog.push(item);
               appendRow(item);
-            }
-
-            // Optional: log non-NotFound errors
-            if (err && err.name && err.name !== "NotFoundException") {
-              // console.log(err);
             }
           });
 
@@ -353,6 +354,7 @@
           scanning = false;
           startBtn.disabled = false;
           stopBtn.disabled = true;
+          monthsInput.disabled = false;
         }
       }
 
@@ -360,6 +362,8 @@
         scanning = false;
         startBtn.disabled = false;
         stopBtn.disabled = true;
+        monthsInput.disabled = false;
+
         try { reader.reset(); } catch (e) {}
       }
 
