@@ -215,25 +215,44 @@ function processBuffer(){
   frameBuffer=[];
 }
 
-startBtn.onclick=async()=>{
-  if(scanning) return;
-  scanning=true;
-  startBtn.disabled=true;
-  stopBtn.disabled=false;
+startBtn.onclick = async () => {
 
-  const devices=await reader.listVideoInputDevices();
-  const deviceId=devices[0].deviceId;
+  if (scanning) return;
 
-  reader.decodeFromVideoDevice(deviceId,video,(result)=>{
-    if(result){
-      frameBuffer.push({
-        raw:result.getText(),
-        format:result.getBarcodeFormat().toString()
-      });
-      clearTimeout(bufferTimer);
-      bufferTimer=setTimeout(processBuffer,600);
+  scanning = true;
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+
+  const devices = await reader.listVideoInputDevices();
+
+  const backCam = devices.find(d =>
+    /back|rear|environment/i.test(d.label)
+  );
+
+  const deviceId = backCam ? backCam.deviceId : devices[0].deviceId;
+
+  reader.decodeFromVideoDevice(
+    deviceId,
+    video,
+    {
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    },
+    (result) => {
+      if (result) {
+        frameBuffer.push({
+          raw: result.getText(),
+          format: result.getBarcodeFormat().toString()
+        });
+
+        clearTimeout(bufferTimer);
+        bufferTimer = setTimeout(processBuffer, 300); // sneller
+      }
     }
-  });
+  );
 };
 
 stopBtn.onclick=()=>{
