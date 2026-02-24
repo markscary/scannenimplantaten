@@ -20,7 +20,6 @@ video { width:min(480px,100%); border-radius:12px; background:black; margin-top:
   font-weight:900;
   display:inline-block;
 }
-
 .ok  { background:#eaffea; color:#0a5a0a; border:1px solid #bfe9bf; }
 .bad { background:#ffe3e3; color:#7a0b0b; border:1px solid #f0b3b3; }
 .unk { background:#eee; color:#333; border:1px solid #ddd; }
@@ -41,7 +40,10 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
   font-size:16px;
   display:none;
   z-index:9999;
+  max-width:92vw;
+  text-align:center;
 }
+.small { font-size:12px; color:#555; margin-top:6px; }
 </style>
 </head>
 
@@ -56,6 +58,10 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
   <button id="stopBtn" disabled>Stop</button>
   <button id="exportBtn" disabled>Export CSV</button>
   <button id="clearBtn">Leegmaken</button>
+</div>
+
+<div class="small">
+  Richt op beide barcodes en houd stil ~1 seconde. De app wacht op GTIN + details voordat hij logt.
 </div>
 
 <video id="video" muted playsinline></video>
@@ -89,197 +95,353 @@ th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
 
 <script>
 (function(){
+  const {BrowserMultiFormatReader, BarcodeFormat, DecodeHintType} = ZXing;
 
-const {BrowserMultiFormatReader,BarcodeFormat,DecodeHintType} = ZXing;
+  // Extra hints for "long" GS1-128 style labels
+  const hints = new Map();
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  hints.set(DecodeHintType.ASSUME_GS1, true);
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+    BarcodeFormat.EAN_13,
+    BarcodeFormat.EAN_8,
+    BarcodeFormat.UPC_A,
+    BarcodeFormat.UPC_E,
+    BarcodeFormat.CODE_128,
+    BarcodeFormat.CODE_39,
+    BarcodeFormat.ITF,
+    BarcodeFormat.DATA_MATRIX,
+    BarcodeFormat.QR_CODE,
+    BarcodeFormat.PDF_417,
+    BarcodeFormat.AZTEC,
+    BarcodeFormat.CODABAR
+  ]);
 
-const hints = new Map();
-hints.set(DecodeHintType.POSSIBLE_FORMATS,[
-  BarcodeFormat.EAN_13,
-  BarcodeFormat.EAN_8,
-  BarcodeFormat.CODE_128,
-  BarcodeFormat.DATA_MATRIX,
-  BarcodeFormat.PDF_417,
-  BarcodeFormat.AZTEC
-]);
+  const reader = new BrowserMultiFormatReader(hints);
 
-const reader = new BrowserMultiFormatReader(hints);
+  const video=document.getElementById("video");
+  const startBtn=document.getElementById("startBtn");
+  const stopBtn=document.getElementById("stopBtn");
+  const exportBtn=document.getElementById("exportBtn");
+  const clearBtn=document.getElementById("clearBtn");
+  const monthsInput=document.getElementById("monthsInput");
 
-const video=document.getElementById("video");
-const startBtn=document.getElementById("startBtn");
-const stopBtn=document.getElementById("stopBtn");
-const exportBtn=document.getElementById("exportBtn");
-const clearBtn=document.getElementById("clearBtn");
-const monthsInput=document.getElementById("monthsInput");
+  const lastGtin=document.getElementById("lastGtin");
+  const lastExpiry=document.getElementById("lastExpiry");
+  const lastLot=document.getElementById("lastLot");
+  const lastSerial=document.getElementById("lastSerial");
+  const lastStatus=document.getElementById("lastStatus");
+  const tbody=document.getElementById("tbody");
 
-const lastGtin=document.getElementById("lastGtin");
-const lastExpiry=document.getElementById("lastExpiry");
-const lastLot=document.getElementById("lastLot");
-const lastSerial=document.getElementById("lastSerial");
-const lastStatus=document.getElementById("lastStatus");
-const tbody=document.getElementById("tbody");
+  let scanning=false;
+  let scanLog=[];
 
-let scanning=false;
-let frameBuffer=[];
-let bufferTimer=null;
-let scanLog=[];
-let lastRaw=null;
-let lastScanTime=0;
+  // Capture window: keep searching for the second barcode
+  const CAPTURE_TIMEOUT_MS = 2200;
+  let capture = null; // { gtin, expiry, lot, serial, startedAt }
+  let captureTimeoutTimer = null;
 
-function showToast(msg){
-  const t=document.getElementById("toast");
-  t.textContent=msg;
-  t.style.display="block";
-  if(navigator.vibrate) navigator.vibrate(80);
-  setTimeout(()=>t.style.display="none",900);
-}
+  let lastRaw=null;
+  let lastRawAt=0;
 
-function classify(exp){
-  if(!exp) return "UNKNOWN";
-  const today=new Date(); today.setHours(0,0,0,0);
-  const expDate=new Date(exp); expDate.setHours(0,0,0,0);
-  if(expDate<today) return "EXPIRED";
-  const limit=new Date(today);
-  limit.setMonth(limit.getMonth()+parseInt(monthsInput.value||0));
-  if(expDate<=limit) return "EXPIRING";
-  return "OK";
-}
-
-function setBadge(status){
-  lastStatus.textContent=status;
-  lastStatus.className="badge big "+(status==="OK"?"ok":"bad");
-}
-
-function parseGs1(raw){
-  const gtinMatch=raw.match(/01(\d{14})/);
-  const expMatch=raw.match(/17(\d{6})/);
-  const lotMatch=raw.match(/10([^\u001d]+)/);
-  const serialMatch=raw.match(/21([^\u001d]+)/);
-
-  let expiry=null;
-  if(expMatch){
-    const y=2000+parseInt(expMatch[1].slice(0,2));
-    const m=parseInt(expMatch[1].slice(2,4))-1;
-    const d=parseInt(expMatch[1].slice(4,6));
-    expiry=new Date(y,m,d);
+  function showToast(msg){
+    const t=document.getElementById("toast");
+    t.textContent=msg;
+    t.style.display="block";
+    if(navigator.vibrate) navigator.vibrate(80);
+    clearTimeout(window.__toastTimer);
+    window.__toastTimer=setTimeout(()=>t.style.display="none",900);
   }
 
-  return {
-    gtin:gtinMatch?gtinMatch[1]:"",
-    expiry,
-    lot:lotMatch?lotMatch[1]:"",
-    serial:serialMatch?serialMatch[1]:""
-  };
-}
+  function setBadge(status){
+    lastStatus.textContent=status;
+    if(status==="OK") lastStatus.className="badge big ok";
+    else if(status==="–") lastStatus.className="badge big unk";
+    else lastStatus.className="badge big bad";
+  }
 
-function processBuffer(){
+  function classify(expIso){
+    if(!expIso) return "UNKNOWN";
+    const today=new Date(); today.setHours(0,0,0,0);
+    const expDate=new Date(expIso); expDate.setHours(0,0,0,0);
+    if(expDate < today) return "EXPIRED";
 
-  let merged={gtin:"",expiry:"",lot:"",serial:""};
+    const months = Math.max(0, Math.min(36, parseInt(monthsInput.value||"0",10) || 0));
+    const limit = new Date(today);
+    limit.setMonth(limit.getMonth()+months);
+    if(expDate <= limit) return "EXPIRING";
+    return "OK";
+  }
 
-  frameBuffer.forEach(item=>{
-    if(item.format==="EAN_13"||item.format==="EAN_8"){
-      merged.gtin=item.raw;
+  function updateLastUI(){
+    lastGtin.textContent = capture?.gtin || "–";
+    lastExpiry.textContent = capture?.expiry || "–";
+    lastLot.textContent = capture?.lot || "–";
+    lastSerial.textContent = capture?.serial || "–";
+  }
+
+  function resetCapture(){
+    capture = null;
+    if (captureTimeoutTimer) clearTimeout(captureTimeoutTimer);
+    captureTimeoutTimer = null;
+  }
+
+  function startCaptureIfNeeded(){
+    if (capture) return;
+    capture = { startedAt: Date.now(), gtin:"", expiry:"", lot:"", serial:"" };
+
+    if (captureTimeoutTimer) clearTimeout(captureTimeoutTimer);
+    captureTimeoutTimer = setTimeout(() => {
+      const hasGtin = !!capture?.gtin;
+      const hasDetails = !!(capture?.expiry || capture?.lot || capture?.serial);
+      if (hasGtin && !hasDetails) showToast("Alleen GTIN gezien. Houd beide barcodes in beeld en probeer opnieuw.");
+      else if (!hasGtin && hasDetails) showToast("Alleen details gezien. Probeer opnieuw met beide barcodes.");
+      resetCapture();
+      updateLastUI();
+      setBadge("–");
+    }, CAPTURE_TIMEOUT_MS);
+  }
+
+  function maybeCommit(){
+    if (!capture) return;
+    const hasGtin = !!capture.gtin;
+    const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
+    if (!(hasGtin && hasDetails)) return;
+
+    const status = classify(capture.expiry);
+    updateLastUI();
+    setBadge(status);
+
+    const timestamp = new Date().toISOString();
+    const row = { timestamp, gtin: capture.gtin, expiry: capture.expiry, status, lot: capture.lot, serial: capture.serial };
+    scanLog.push(row);
+
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td>${timestamp}</td>
+      <td>${row.gtin}</td>
+      <td>${row.expiry}</td>
+      <td>${row.status}</td>
+      <td>${row.lot}</td>
+      <td>${row.serial}</td>`;
+    tbody.prepend(tr);
+
+    exportBtn.disabled = scanLog.length === 0;
+    showToast("Artikel gescand, scan de volgende.");
+
+    resetCapture();
+  }
+
+  // --- Robust GS1 normalization + parsing (for "long barcode variant") ---
+  function normalizeGs1Text(raw){
+    if (!raw) return "";
+    let s = String(raw);
+
+    // Remove common symbology identifiers from scanners
+    // GS1-128: ]C1, GS1 DataMatrix: ]d2, QR: ]Q3, etc.
+    s = s.replace(/^\](C1|c1|d2|D2|Q3|q3|e0|E0)/, "");
+
+    // Remove parentheses and whitespace: (01) -> 01
+    s = s.replace(/[()\s]/g, "");
+
+    // Some scanners may output <GS> or other placeholders; normalize those to ASCII 29
+    s = s.replace(/<GS>/gi, "\u001d");
+
+    return s;
+  }
+
+  function parseGs1(raw){
+    const GS = "\u001d";
+    const s = normalizeGs1Text(raw);
+
+    const readFixedAt = (idx, len) => s.slice(idx, idx + len);
+
+    // Read variable until GS or until we detect a new AI boundary
+    const readVariableFrom = (idx) => {
+      let out = "";
+      let i = idx;
+      while (i < s.length) {
+        const ch = s[i];
+        if (ch === GS) break;
+
+        // stop if we see a known AI boundary and we already have some data
+        const next2 = s.slice(i, i+2);
+        if (out.length > 0 && ["01","10","11","15","17","21"].includes(next2)) break;
+
+        out += ch;
+        i++;
+      }
+      return out;
+    };
+
+    let gtin = "";
+    let expiryISO = "";
+    let lot = "";
+    let serial = "";
+
+    // Walk through the string reading AIs sequentially.
+    // Supports: 01(14), 17(6), 15(6), 11(6), 10(var), 21(var)
+    let i = 0;
+    while (i < s.length) {
+      // skip group separators
+      if (s[i] === GS) { i++; continue; }
+
+      const ai2 = s.slice(i, i+2);
+
+      if (ai2 === "01") {
+        const v = readFixedAt(i+2, 14);
+        if (/^\d{14}$/.test(v)) gtin = v;
+        i += 2 + 14;
+        continue;
+      }
+
+      if (ai2 === "17" || ai2 === "15" || ai2 === "11") {
+        const v = readFixedAt(i+2, 6);
+        if (/^\d{6}$/.test(v)) {
+          const yy = parseInt(v.slice(0,2),10);
+          const mm = parseInt(v.slice(2,4),10);
+          const dd = parseInt(v.slice(4,6),10);
+          const yyyy = 2000 + yy;
+          const dt = new Date(yyyy, mm-1, dd);
+          if (!Number.isNaN(dt.getTime())) {
+            const M = String(dt.getMonth()+1).padStart(2,"0");
+            const D = String(dt.getDate()).padStart(2,"0");
+            expiryISO = `${dt.getFullYear()}-${M}-${D}`;
+          }
+        }
+        i += 2 + 6;
+        continue;
+      }
+
+      if (ai2 === "10") {
+        const v = readVariableFrom(i+2);
+        if (v) lot = v;
+        i += 2 + v.length;
+        continue;
+      }
+
+      if (ai2 === "21") {
+        const v = readVariableFrom(i+2);
+        if (v) serial = v;
+        i += 2 + v.length;
+        continue;
+      }
+
+      // If no AI recognized, advance 1 char (keeps parser resilient)
+      i += 1;
+    }
+
+    return { gtin, expiryISO, lot, serial };
+  }
+
+  function handleDecoded(raw, format){
+    const now = Date.now();
+    if (raw === lastRaw && (now - lastRawAt) < 180) return;
+    lastRaw = raw;
+    lastRawAt = now;
+
+    startCaptureIfNeeded();
+
+    // Treat GTIN-only formats as GTIN (EAN/UPC)
+    if (format === "EAN_13" || format === "EAN_8" || format === "UPC_A" || format === "UPC_E") {
+      capture.gtin = String(raw);
+      updateLastUI();
+      setBadge("PENDING_DETAILS");
+      showToast("GTIN gezien. Houd stil: details zoeken…");
+      return;
+    }
+
+    // Try GS1 parse for everything else (incl. long Code128 variants)
+    const parsed = parseGs1(raw);
+
+    if (parsed.gtin) capture.gtin = parsed.gtin;
+    if (parsed.expiryISO) capture.expiry = parsed.expiryISO;
+    if (parsed.lot) capture.lot = parsed.lot;
+    if (parsed.serial) capture.serial = parsed.serial;
+
+    updateLastUI();
+
+    const hasDetails = !!(capture.expiry || capture.lot || capture.serial);
+    const hasGtin = !!capture.gtin;
+
+    if (hasDetails && !hasGtin) {
+      setBadge("PENDING_GTIN");
+      showToast("Details gezien. Houd stil: GTIN zoeken…");
     } else {
-      const p=parseGs1(item.raw);
-      if(p.gtin) merged.gtin=p.gtin;
-      if(p.expiry) merged.expiry=p.expiry.toISOString().slice(0,10);
-      if(p.lot) merged.lot=p.lot;
-      if(p.serial) merged.serial=p.serial;
+      setBadge("PENDING_MERGE");
     }
-  });
 
-  frameBuffer=[];
+    maybeCommit();
+  }
 
-  if(!merged.gtin) return;
+  function downloadCSV(){
+    const header=["Timestamp","GTIN","Expiry","Status","Lot","Serial"];
+    const rows = scanLog.map(x => header.map(h => {
+      const key = h.toLowerCase();
+      const v = (x[key] ?? x[h] ?? "");
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+    }).join(","));
+    const csv=[header.join(","),...rows].join("\n");
+    const blob=new Blob([csv],{type:"text/csv"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download="scanlog.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
-  const status=classify(merged.expiry);
-  setBadge(status);
+  startBtn.onclick = async () => {
+    if (scanning) return;
 
-  lastGtin.textContent=merged.gtin||"–";
-  lastExpiry.textContent=merged.expiry||"–";
-  lastLot.textContent=merged.lot||"–";
-  lastSerial.textContent=merged.serial||"–";
+    scanning=true;
+    startBtn.disabled=true;
+    stopBtn.disabled=false;
 
-  const timestamp=new Date().toISOString();
+    const constraints = {
+      video: {
+        facingMode: { ideal: "environment" },
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 }
+      }
+    };
 
-  scanLog.push({timestamp,...merged,status});
+    reader.decodeFromConstraints(constraints, video, (result, err) => {
+      if (!scanning) return;
+      if (result) handleDecoded(result.getText(), result.getBarcodeFormat().toString());
+    });
 
-  const tr=document.createElement("tr");
-  tr.innerHTML=`
-    <td>${timestamp}</td>
-    <td>${merged.gtin}</td>
-    <td>${merged.expiry}</td>
-    <td>${status}</td>
-    <td>${merged.lot}</td>
-    <td>${merged.serial}</td>`;
-  tbody.prepend(tr);
-
-  exportBtn.disabled=false;
-  showToast("Artikel gescand, scan de volgende.");
-}
-
-startBtn.onclick=async()=>{
-  if(scanning) return;
-  scanning=true;
-  startBtn.disabled=true;
-  stopBtn.disabled=false;
-
-  const constraints={
-    video:{
-      facingMode:{ideal:"environment"},
-      width:{ideal:1920},
-      height:{ideal:1080}
-    }
+    showToast("Scanner gestart. Richt op beide barcodes.");
   };
 
-  reader.decodeFromConstraints(constraints,video,(result)=>{
-    if(result){
-      const raw=result.getText();
-      const now=Date.now();
-      if(raw===lastRaw && (now-lastScanTime)<200) return;
-      lastRaw=raw;
-      lastScanTime=now;
+  stopBtn.onclick = () => {
+    scanning=false;
+    reader.reset();
+    startBtn.disabled=false;
+    stopBtn.disabled=true;
+    resetCapture();
+    setBadge("–");
+    showToast("Scanner gestopt.");
+  };
 
-      frameBuffer.push({
-        raw,
-        format:result.getBarcodeFormat().toString()
-      });
+  clearBtn.onclick = () => {
+    scanLog = [];
+    tbody.innerHTML = "";
+    exportBtn.disabled = true;
+    resetCapture();
 
-      clearTimeout(bufferTimer);
-      bufferTimer=setTimeout(processBuffer,300);
-    }
-  });
-};
+    lastGtin.textContent="–";
+    lastExpiry.textContent="–";
+    lastLot.textContent="–";
+    lastSerial.textContent="–";
+    setBadge("–");
 
-stopBtn.onclick=()=>{
-  scanning=false;
-  reader.reset();
-  startBtn.disabled=false;
-  stopBtn.disabled=true;
-};
+    showToast("Log geleegd");
+  };
 
-clearBtn.onclick=()=>{
-  scanLog=[];
-  tbody.innerHTML="";
-  lastGtin.textContent="–";
-  lastExpiry.textContent="–";
-  lastLot.textContent="–";
-  lastSerial.textContent="–";
+  exportBtn.onclick = downloadCSV;
+
   setBadge("–");
-  showToast("Log geleegd");
-};
-
-exportBtn.onclick=()=>{
-  const header=["Timestamp","GTIN","Expiry","Status","Lot","Serial"];
-  const rows=scanLog.map(x=>header.map(h=>x[h.toLowerCase()]||x[h]||"").join(","));
-  const csv=[header.join(","),...rows].join("\n");
-  const blob=new Blob([csv],{type:"text/csv"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url;
-  a.download="scanlog.csv";
-  a.click();
-};
-
 })();
 </script>
 
