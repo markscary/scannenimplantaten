@@ -381,7 +381,43 @@
     clearBtn.addEventListener("click", clearLog);
 
     // UX: start automatically if desired
-    // start();
+    async function start() {
+  if (scanning) return;
+
+  try {
+    // Force permission prompt early
+    await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+
+    const devices = await reader.listVideoInputDevices();
+    if (!devices.length) {
+      alert("Geen camera gevonden.");
+      return;
+    }
+
+    const back = devices.find(d => /back|rear|environment/i.test(d.label));
+    currentDeviceId = (back?.deviceId) || devices[0].deviceId;
+
+    scanning = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+    reader.decodeFromVideoDevice(currentDeviceId, videoEl, (result, err) => {
+      if (!scanning) return;
+      if (err && err.name && err.name !== "NotFoundException") {
+        console.log(err);
+      }
+      if (result) {
+        // (laat de rest van jouw bestaande result-handling staan)
+        const raw = result.getText();
+        // ... jouw bestaande code ...
+      }
+    });
+
+  } catch (e) {
+    alert("Scanner start niet: " + (e?.message || e));
+    console.log(e);
+  }
+};
   </script>
 </body>
 </html>
