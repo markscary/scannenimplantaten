@@ -1,391 +1,257 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>GS1 Implant Scan</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    button { padding: 10px 12px; cursor: pointer; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
-    button:disabled { opacity: .6; cursor: not-allowed; }
-    input[type="number"] { padding: 10px 12px; border-radius: 10px; border: 1px solid #ddd; width: 110px; }
-    label { font-size: 12px; color: #444; }
-    video { width: min(480px, 100%); border: 1px solid #ddd; border-radius: 12px; background: #000; }
-    .card { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Implant Scanner</title>
 
-    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-weight: 800; font-size: 12px; }
-    .badge.big { font-size: 24px; padding: 10px 18px; border-radius: 999px; letter-spacing: .5px; }
+<style>
+body { font-family: system-ui; margin:16px; }
+.row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+input { padding:10px; border-radius:10px; border:1px solid #ddd; width:90px; }
+video { width:min(480px,100%); border-radius:12px; background:black; margin-top:10px; }
 
-    /* Color logic: green only for OK, red for any NOT OK */
-    .ok  { background: #eaffea; color: #0a5a0a; border: 1px solid #bfe9bf; }
-    .bad { background: #ffe3e3; color: #7a0b0b; border: 1px solid #f0b3b3; }
-    .unk { background: #eee; color: #333; border: 1px solid #ddd; }
+.badge.big {
+  font-size:26px;
+  padding:12px 20px;
+  border-radius:999px;
+  font-weight:800;
+  display:inline-block;
+  margin-top:8px;
+}
 
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; font-size: 12px; vertical-align: top; }
-    .small { font-size: 12px; color: #555; }
-  </style>
+.ok  { background:#eaffea; color:#0a5a0a; border:1px solid #bfe9bf; }
+.bad { background:#ffe3e3; color:#7a0b0b; border:1px solid #f0b3b3; }
+.unk { background:#eee; color:#333; border:1px solid #ddd; }
+
+table { width:100%; border-collapse:collapse; margin-top:15px; font-size:12px; }
+th,td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
+
+/* Toast */
+#toast {
+  position:fixed;
+  left:50%;
+  bottom:20px;
+  transform:translateX(-50%);
+  background:rgba(0,0,0,0.9);
+  color:white;
+  padding:14px 20px;
+  border-radius:14px;
+  font-weight:800;
+  font-size:16px;
+  display:none;
+  z-index:9999;
+}
+</style>
 </head>
+
 <body>
-  <h2>Implant Barcode Scanner (GS1 DataMatrix + EAN)</h2>
 
-  <div class="row" style="margin-bottom:6px;">
-    <div>
-      <label for="monthsInput"><strong>Expiring threshold (months)</strong></label><br />
-      <input id="monthsInput" type="number" min="0" max="36" step="1" value="3" />
-    </div>
+<h2>Implant Scanner</h2>
 
-    <button id="startBtn">Start scanner</button>
-    <button id="stopBtn" disabled>Stop</button>
-    <button id="exportBtn" disabled>Export CSV</button>
-    <button id="clearBtn" disabled>Clear log</button>
-  </div>
+<div class="row">
+  <label>Expiring threshold (months)</label>
+  <input id="monthsInput" type="number" value="3" min="0" max="36">
+  <button id="startBtn">Start scanner</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <button id="exportBtn" disabled>Export CSV</button>
+</div>
 
-  <div class="small">
-    Tip: scan the GS1 UDI (often DataMatrix) to read expiry (AI 17). EAN usually has no expiry.
-  </div>
+<video id="video" muted playsinline></video>
 
-  <div class="card">
-    <div class="row">
-      <video id="video" muted playsinline></video>
-      <div>
-        <div><strong>Last scan</strong></div>
+<div>
+  <p>Type: <span id="lastType">–</span></p>
+  <p>GTIN: <span id="lastGtin">–</span></p>
+  <p>Expiry: <span id="lastExpiry">–</span></p>
+  <div>Status:</div>
+  <span id="lastStatus" class="badge big unk">–</span>
+</div>
 
-        <div style="margin-top:8px;">
-          <div>Type: <span id="lastType">–</span></div>
-          <div>GTIN: <span id="lastGtin">–</span></div>
-          <div>Expiry: <span id="lastExpiry">–</span></div>
-          <div style="margin-top:10px;">
-            Status:
-            <span id="lastStatus" class="badge big unk">–</span>
-          </div>
-          <div class="small" style="margin-top:10px;">
-            If Start does nothing: open in Safari (not inside GitHub app) and allow camera access.
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+<table>
+<thead>
+<tr>
+<th>Timestamp</th>
+<th>Type</th>
+<th>GTIN</th>
+<th>Expiry</th>
+<th>Status</th>
+<th>Lot</th>
+<th>Serial</th>
+</tr>
+</thead>
+<tbody id="tbody"></tbody>
+</table>
 
-  <div class="card">
-    <div><strong>Scan log</strong> (<span id="count">0</span>)</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Timestamp</th>
-          <th>Type</th>
-          <th>GTIN</th>
-          <th>Expiry</th>
-          <th>Status</th>
-          <th>Lot</th>
-          <th>Serial</th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
-    </table>
-  </div>
+<div id="toast">Artikel gescand, scan de volgende.</div>
 
-  <!-- iPhone-friendly (non-module) ZXing bundle -->
-  <script src="https://unpkg.com/@zxing/library@0.21.3"></script>
+<script src="https://unpkg.com/@zxing/library@0.21.3"></script>
 
-  <script>
-    (function () {
-      const startBtn  = document.getElementById("startBtn");
-      const stopBtn   = document.getElementById("stopBtn");
-      const exportBtn = document.getElementById("exportBtn");
-      const clearBtn  = document.getElementById("clearBtn");
-      const monthsInput = document.getElementById("monthsInput");
-      const videoEl   = document.getElementById("video");
+<script>
+(function(){
 
-      const lastType   = document.getElementById("lastType");
-      const lastGtin   = document.getElementById("lastGtin");
-      const lastExpiry = document.getElementById("lastExpiry");
-      const lastStatus = document.getElementById("lastStatus");
+const {BrowserMultiFormatReader,BarcodeFormat,DecodeHintType} = ZXing;
 
-      const tbody = document.getElementById("tbody");
-      const countEl = document.getElementById("count");
+const reader = new BrowserMultiFormatReader(new Map([
+  [DecodeHintType.POSSIBLE_FORMATS,[
+    BarcodeFormat.EAN_13,
+    BarcodeFormat.EAN_8,
+    BarcodeFormat.CODE_128,
+    BarcodeFormat.DATA_MATRIX,
+    BarcodeFormat.QR_CODE,
+    BarcodeFormat.PDF_417,
+    BarcodeFormat.AZTEC
+  ]]
+]));
 
-      const scanLog = [];
+const startBtn=document.getElementById("startBtn");
+const stopBtn=document.getElementById("stopBtn");
+const exportBtn=document.getElementById("exportBtn");
+const monthsInput=document.getElementById("monthsInput");
+const video=document.getElementById("video");
+const tbody=document.getElementById("tbody");
 
-      let scanning = false;
-      let lastRaw = null;
-      let lastScanAtMs = 0;
+const lastType=document.getElementById("lastType");
+const lastGtin=document.getElementById("lastGtin");
+const lastExpiry=document.getElementById("lastExpiry");
+const lastStatus=document.getElementById("lastStatus");
 
-      function getThresholdMonths() {
-        const n = parseInt(monthsInput.value, 10);
-        if (Number.isNaN(n) || n < 0) return 0;
-        if (n > 36) return 36;
-        return n;
+const scanLog=[];
+let scanning=false;
+
+function showToast(){
+  const t=document.getElementById("toast");
+  t.style.display="block";
+  if(navigator.vibrate) navigator.vibrate(100);
+  clearTimeout(window.toastTimer);
+  window.toastTimer=setTimeout(()=>{t.style.display="none"},1000);
+}
+
+function classify(exp){
+  if(!exp) return "UNKNOWN";
+  const today=new Date(); today.setHours(0,0,0,0);
+  const expDate=new Date(exp); expDate.setHours(0,0,0,0);
+  if(expDate<today) return "EXPIRED";
+  const limit=new Date(today);
+  limit.setMonth(limit.getMonth()+parseInt(monthsInput.value||0));
+  if(expDate<=limit) return "EXPIRING";
+  return "OK";
+}
+
+function setBadge(status){
+  lastStatus.textContent=status;
+  lastStatus.className="badge big "+(status==="OK"?"ok":"bad");
+}
+
+function toISO(d){
+  if(!d) return "";
+  return d.toISOString().slice(0,10);
+}
+
+function parseGs1(raw){
+  const gtinMatch=raw.match(/01(\d{14})/);
+  const expMatch=raw.match(/17(\d{6})/);
+  const lotMatch=raw.match(/10([^\u001d]+)/);
+  const serialMatch=raw.match(/21([^\u001d]+)/);
+
+  let expiry=null;
+  if(expMatch){
+    const y=2000+parseInt(expMatch[1].slice(0,2));
+    const m=parseInt(expMatch[1].slice(2,4))-1;
+    const d=parseInt(expMatch[1].slice(4,6));
+    expiry=new Date(y,m,d);
+  }
+
+  return {
+    gtin:gtinMatch?gtinMatch[1]:"",
+    expiry,
+    lot:lotMatch?lotMatch[1]:"",
+    serial:serialMatch?serialMatch[1]:""
+  };
+}
+
+startBtn.onclick=async()=>{
+  if(scanning) return;
+  scanning=true;
+  startBtn.disabled=true;
+  stopBtn.disabled=false;
+
+  const devices=await reader.listVideoInputDevices();
+  const deviceId=devices[0].deviceId;
+
+  reader.decodeFromVideoDevice(deviceId,video,(result,err)=>{
+    if(result){
+      const raw=result.getText();
+      const fmt=result.getBarcodeFormat().toString();
+      let gtin="",expiry="",lot="",serial="",status="";
+
+      if(fmt==="EAN_13"||fmt==="EAN_8"){
+        gtin=raw;
+        status="UNKNOWN";
+      } else {
+        const parsed=parseGs1(raw);
+        gtin=parsed.gtin;
+        expiry=toISO(parsed.expiry);
+        lot=parsed.lot;
+        serial=parsed.serial;
+        status=classify(parsed.expiry);
       }
 
-      function setStatusBadge(text) {
-        lastStatus.textContent = text;
+      lastType.textContent=fmt;
+      lastGtin.textContent=gtin||"–";
+      lastExpiry.textContent=expiry||"–";
+      setBadge(status);
 
-        // green only when OK, red for everything else (including expiring soon / expired / unknown)
-        const cls = (text === "OK") ? "ok" : (text === "–" ? "unk" : "bad");
-        lastStatus.className = "badge big " + cls;
-      }
+      const item={
+        timestamp:new Date().toISOString(),
+        type:fmt,
+        gtin,
+        expiry,
+        status,
+        lot,
+        serial
+      };
 
-      function toISODate(d) {
-        if (!d) return "";
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        return `${yyyy}-${mm}-${dd}`;
-      }
+      scanLog.push(item);
 
-      function addMonths(date, months) {
-        const d = new Date(date);
-        const day = d.getDate();
-        d.setMonth(d.getMonth() + months);
-        if (d.getDate() < day) d.setDate(0);
-        return d;
-      }
+      const tr=document.createElement("tr");
+      tr.innerHTML=`
+        <td>${item.timestamp}</td>
+        <td>${item.type}</td>
+        <td>${item.gtin}</td>
+        <td>${item.expiry}</td>
+        <td>${item.status}</td>
+        <td>${item.lot}</td>
+        <td>${item.serial}</td>`;
+      tbody.prepend(tr);
 
-      function classifyExpiry(expiryDate) {
-        if (!expiryDate) return "UNKNOWN_NO_EXPIRY_IN_CODE";
+      exportBtn.disabled=false;
+      showToast();
+    }
+  });
+};
 
-        const today = new Date();
-        today.setHours(0,0,0,0);
+stopBtn.onclick=()=>{
+  scanning=false;
+  reader.reset();
+  startBtn.disabled=false;
+  stopBtn.disabled=true;
+};
 
-        const exp = new Date(expiryDate);
-        exp.setHours(0,0,0,0);
+exportBtn.onclick=()=>{
+  const header=["Timestamp","Type","GTIN","Expiry","Status","Lot","Serial"];
+  const rows=scanLog.map(x=>header.map(h=>x[h.toLowerCase()]||x[h]||"").join(","));
+  const csv=[header.join(","),...rows].join("\n");
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="scanlog.csv";
+  a.click();
+};
 
-        if (exp < today) return "EXPIRED";
+})();
+</script>
 
-        const months = getThresholdMonths();
-        const limit = addMonths(today, months);
-
-        if (exp <= limit) return `EXPIRING_≤${months}_MONTHS`;
-        return "OK";
-      }
-
-      function escapeHtml(str) {
-        return (str || "").replace(/[&<>"']/g, m => ({
-          "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
-        }[m]));
-      }
-
-      function csvEscape(v) {
-        const s = String(v ?? "");
-        if (/[",\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
-        return s;
-      }
-
-      function appendRow(item) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${item.timestamp}</td>
-          <td>${escapeHtml(item.type)}</td>
-          <td>${escapeHtml(item.gtin || "")}</td>
-          <td>${escapeHtml(item.expiry || "")}</td>
-          <td>${escapeHtml(item.status)}</td>
-          <td>${escapeHtml(item.lot || "")}</td>
-          <td>${escapeHtml(item.serial || "")}</td>
-        `;
-        tbody.prepend(tr);
-        countEl.textContent = String(scanLog.length);
-        exportBtn.disabled = scanLog.length === 0;
-        clearBtn.disabled = scanLog.length === 0;
-      }
-
-      function downloadCSV() {
-        const header = ["Timestamp","Type","GTIN","ExpiryDate","Status","Lot","Serial"];
-        const rows = scanLog.map(x => [
-          x.timestamp, x.type, x.gtin, x.expiry, x.status, x.lot, x.serial
-        ].map(csvEscape).join(","));
-
-        const csv = [header.join(","), ...rows].join("\n");
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `implant_scans_${new Date().toISOString().slice(0,10)}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      }
-
-      function parseGs1(raw) {
-        const GS = "\u001d";
-        const s = raw || "";
-
-        const readFixed = (ai, len) => {
-          const idx = s.indexOf(ai);
-          if (idx === -1) return "";
-          return s.slice(idx + ai.length, idx + ai.length + len);
-        };
-
-        const readVariable = (ai) => {
-          const start = s.indexOf(ai);
-          if (start === -1) return "";
-          let i = start + ai.length;
-          let out = "";
-          while (i < s.length) {
-            const ch = s[i];
-            if (ch === GS) break;
-            const next2 = s.slice(i, i+2);
-            if (out.length > 0 && ["01","10","17","21","11","15","30","37"].includes(next2)) break;
-            out += ch;
-            i++;
-          }
-          return out;
-        };
-
-        const gtin14 = readFixed("01", 14);
-        const exp6 = readFixed("17", 6);
-        const lot = readVariable("10");
-        const serial = readVariable("21");
-
-        let expiry = null;
-        if (exp6 && exp6.length === 6) {
-          const yy = parseInt(exp6.slice(0,2), 10);
-          const mm = parseInt(exp6.slice(2,4), 10);
-          const ddRaw = parseInt(exp6.slice(4,6), 10);
-          const yyyy = 2000 + yy;
-
-          if (ddRaw === 0) expiry = new Date(yyyy, mm, 0);
-          else expiry = new Date(yyyy, mm - 1, ddRaw);
-
-          if (Number.isNaN(expiry.getTime())) expiry = null;
-        }
-
-        return { gtin: gtin14, expiry, lot, serial };
-      }
-
-      if (!window.ZXing) {
-        alert("ZXing library failed to load. Try disabling content blockers or switching to 4G/5G.");
-        return;
-      }
-
-      const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = window.ZXing;
-
-      const hints = new Map();
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-        BarcodeFormat.EAN_13,
-        BarcodeFormat.EAN_8,
-        BarcodeFormat.CODE_128,
-        BarcodeFormat.DATA_MATRIX,
-        BarcodeFormat.QR_CODE,
-        BarcodeFormat.PDF_417,
-        BarcodeFormat.AZTEC
-      ]);
-
-      const reader = new BrowserMultiFormatReader(hints);
-
-      async function start() {
-        if (scanning) return;
-
-        try {
-          await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-
-          const devices = await reader.listVideoInputDevices();
-          if (!devices.length) {
-            alert("No camera devices found.");
-            return;
-          }
-
-          const back = devices.find(d => /back|rear|environment/i.test(d.label));
-          const deviceId = (back && back.deviceId) ? back.deviceId : devices[0].deviceId;
-
-          scanning = true;
-          startBtn.disabled = true;
-          stopBtn.disabled = false;
-          monthsInput.disabled = true; // lock threshold while scanning
-
-          reader.decodeFromVideoDevice(deviceId, videoEl, (result, err) => {
-            if (!scanning) return;
-
-            if (result) {
-              const raw = result.getText();
-              const now = Date.now();
-              if (raw === lastRaw && (now - lastScanAtMs) < 1200) return;
-              lastRaw = raw;
-              lastScanAtMs = now;
-
-              const fmt = result.getBarcodeFormat().toString();
-
-              let gtin = "";
-              let expiryISO = "";
-              let lot = "";
-              let serial = "";
-              let status = "UNKNOWN";
-
-              if (fmt === "EAN_13" || fmt === "EAN_8") {
-                gtin = raw;
-                status = "UNKNOWN_NO_EXPIRY_IN_CODE";
-              } else {
-                const parsed = parseGs1(raw);
-                gtin = parsed.gtin || "";
-                lot = parsed.lot || "";
-                serial = parsed.serial || "";
-                expiryISO = parsed.expiry ? toISODate(parsed.expiry) : "";
-                status = classifyExpiry(parsed.expiry);
-
-                if (!gtin && !expiryISO && !lot && !serial) {
-                  status = "UNKNOWN_NOT_GS1_OR_NO_AI17";
-                }
-              }
-
-              lastType.textContent = fmt;
-              lastGtin.textContent = gtin || "—";
-              lastExpiry.textContent = expiryISO || "—";
-              setStatusBadge(status);
-
-              const item = {
-                timestamp: new Date().toISOString(),
-                type: fmt,
-                gtin,
-                expiry: expiryISO,
-                status,
-                lot,
-                serial
-              };
-              scanLog.push(item);
-              appendRow(item);
-            }
-          });
-
-        } catch (e) {
-          alert("Scanner failed to start: " + (e && e.message ? e.message : e));
-          scanning = false;
-          startBtn.disabled = false;
-          stopBtn.disabled = true;
-          monthsInput.disabled = false;
-        }
-      }
-
-      function stop() {
-        scanning = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        monthsInput.disabled = false;
-
-        try { reader.reset(); } catch (e) {}
-      }
-
-      function clearLog() {
-        scanLog.length = 0;
-        tbody.innerHTML = "";
-        countEl.textContent = "0";
-        exportBtn.disabled = true;
-        clearBtn.disabled = true;
-        lastType.textContent = "–";
-        lastGtin.textContent = "–";
-        lastExpiry.textContent = "–";
-        setStatusBadge("–");
-      }
-
-      startBtn.addEventListener("click", start);
-      stopBtn.addEventListener("click", stop);
-      exportBtn.addEventListener("click", downloadCSV);
-      clearBtn.addEventListener("click", clearLog);
-
-      setStatusBadge("–");
-    })();
-  </script>
 </body>
 </html>
